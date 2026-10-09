@@ -1,6 +1,7 @@
 import hashlib
 import hmac
 import json
+import logging
 import os
 import re
 import sqlite3
@@ -34,7 +35,8 @@ WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix='local-ai')
 PROFILE_WORKER = ThreadPoolExecutor(max_workers=2, thread_name_prefix='facebook-profile')
 PROFILE_PENDING = set()
 PROFILE_LOCK = threading.Lock()
-app = FastAPI(title='BentaBuddy', version='0.1.0')
+LOG = logging.getLogger('bentabuddy')
+app =FastAPI(title='BentaBuddy', version='0.1.0')
 
 
 def now():
@@ -158,13 +160,20 @@ def enrich(order):
     return dict(order, total_cents=order_total(order), paid_cents=sum(p['amount_cents'] for p in order.get('payments', [])))
 
 
-def canonical_items(db, items, business_kind=None):
+def canonical_items(db, items, business_kind=None, previous=()):
     if not isinstance(items, list) or not items or len(items) > 30:
         raise HTTPException(400, 'Add between 1 and 30 order items.')
+    # A revision keeps the approved price and details of untouched lines, even if the
+    # catalog entry was later repriced, renamed, or turned off.
+    unchanged = {(i['product_id'], i['quantity'], i['unit']): i for i in previous}
     result = []
     for item in items:
         if not isinstance(item, dict):
             raise HTTPException(400, 'Each order item must identify a product, quantity, and unit.')
+        kept = unchanged.pop((item.get('product_id'), item.get('quantity'), item.get('unit')), None)
+        if kept:
+            result.append(dict(kept))
+            continue
         product = read_payload(db, 'products', item.get('product_id', ''))
         if business_kind and product.get('business_kind', 'bakery') != business_kind:
             raise HTTPException(400, 'Choose an offering from the selected business catalog.')
@@ -452,6 +461,7 @@ def run_job(job_id):
     started = time.monotonic()
     try:
         with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
             job = read_payload(db, 'jobs', job_id)
             if job['status'] == 'canceled':
                 return
@@ -475,6 +485,7 @@ def run_job(job_id):
             raise ValueError('Local AI server returned an invalid response. Restart the local AI and retry.') from None
         proposal = parse_model_response(data, RUNTIME)
         with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
             latest_job = read_payload(db, 'jobs', job_id)
             if latest_job['status'] == 'canceled':
                 return
@@ -487,6 +498,7 @@ def run_job(job_id):
             write_payload(db, 'jobs', latest_job)
     except Exception as exc:
         with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
             job = read_payload(db, 'jobs', job_id)
             if job['status'] == 'canceled':
                 return
@@ -509,7 +521,11 @@ def analyze(conversation_id: str):
             raise HTTPException(409, 'No new messages to extract. Add a follow-up or choose Start new order here on a new purchase message.')
         for job in payloads(db, 'jobs'):
             if job['conversation_id'] == conversation_id and job['status'] in ['queued', 'running']:
-                return job
+                if job['conversation_version'] == conv['version']:
+                    return job
+                # Newer messages arrived. Replace the stale extraction instead of letting it fail.
+                job['status'] = 'canceled'
+                write_payload(db, 'jobs', job)
         order_version = read_payload(db, 'orders', conv['linked_order_id'])['version'] if conv.get('linked_order_id') else None
         job = dict(id=uid('job'), conversation_id=conversation_id, conversation_version=conv['version'], message_count=len(conv['messages']), order_version=order_version, status='queued', created_at=now(), model=MODEL, business_kind=conv.get('business_kind',business_profile(db)['kind']), proposal=None, error=None)
         write_payload(db, 'jobs', job)
@@ -592,7 +608,8 @@ def save_order(body, order_id=None):
                 raise HTTPException(409, 'This proposal is no longer current. Extract the latest messages.')
             if conv.get('linked_order_id') != order_id:
                 linked = read_payload(db, 'orders', conv['linked_order_id']) if conv.get('linked_order_id') else None
-                new_after_closed = (not order_id and job['proposal']['action'] == 'new_order' and linked
+                # A closed order cannot be revised, so any draft after it becomes a new order.
+                new_after_closed = (not order_id and linked
                                     and (linked['state'] == 'canceled' or linked['fulfillment'] == 'fulfilled'))
                 if not new_after_closed:
                     raise HTTPException(409, 'This conversation is linked to a different order.')
@@ -613,7 +630,7 @@ def save_order(body, order_id=None):
                 check_available(db, reservation, order_id)
         elif any(read_payload(db, 'products', i.get('product_id','')).get('offering_type')=='accommodation' for i in requested_items):
             raise HTTPException(400, 'Add check-in, check-out, and guest details for accommodation bookings.')
-        items = canonical_items(db, requested_items, None if old else ('bakery' if body.is_demo else business_profile(db)['kind']))
+        items = canonical_items(db, requested_items, None if old else ('bakery' if body.is_demo else business_profile(db)['kind']), old['items'] if old else ())
         if old and sum(i['line_total'] for i in items) < sum(p['amount_cents'] for p in old['payments']):
             raise HTTPException(400, 'Revised total is below verified payments. Resolve the refund before revising.')
         items_changed = bool(old and items != old['items'])
@@ -761,6 +778,8 @@ class ProductBody(BaseModel):
 def add_product(body: ProductBody):
     if body.unit not in UNITS or body.offering_type not in OFFERING_TYPES:
         raise HTTPException(400, 'Choose a supported base unit.')
+    if body.offering_type == 'accommodation' and body.unit != 'night':
+        raise HTTPException(400, 'Accommodations must be priced per night so stays can be booked.')
     with connect() as db:
         bakery = business_profile(db)['kind'] == 'bakery'
         product = dict(body.model_dump(), id=uid('p'), business_kind=business_profile(db)['kind'], units={body.unit: 1, **({'dozen': 12} if body.unit == 'piece' and bakery else {})})
@@ -776,6 +795,9 @@ def edit_product(product_id: str, body: ProductBody):
         old = read_payload(db, 'products', product_id)
         if body.unit != old['unit']:
             raise HTTPException(400, 'Base units cannot change after creation.')
+        # Older non-nightly accommodations stay editable; only block new conversions.
+        if body.offering_type == 'accommodation' and old.get('offering_type') != 'accommodation' and body.unit != 'night':
+            raise HTTPException(400, 'Accommodations must be priced per night so stays can be booked.')
         product = dict(old, **body.model_dump(), sample_pricing=False)
         write_payload(db, 'products', product)
     return product
@@ -784,6 +806,7 @@ def edit_product(product_id: str, body: ProductBody):
 @app.post('/api/jobs/{job_id}/dismiss')
 def dismiss(job_id: str):
     with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
         job = read_payload(db, 'jobs', job_id)
         if job['status'] == 'approved':
             raise HTTPException(400, 'Already approved.')
@@ -925,8 +948,12 @@ async def webhook(request: Request):
                     db.execute('INSERT INTO webhook_ids VALUES (?)', (mid,))
                     analyze_ids.add(key)
     # Store first, then queue local inference without waiting on model execution.
+    # Messages are already saved; one queueing failure must not make Meta retry the batch.
     for key in analyze_ids:
-        analyze(key)
+        try:
+            analyze(key)
+        except Exception:
+            LOG.exception('Could not queue extraction for %s; the owner can extract manually.', key)
     for key in profile_ids:
         queue_profile(key)
     return {'received': True}

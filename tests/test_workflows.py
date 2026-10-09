@@ -640,6 +640,86 @@ class Workflows(unittest.TestCase):
         self.assertFalse(facebook[0]['is_demo'])
         self.assertEqual(len(state['jobs']), 1)
 
+    def edit_product(self, product_id, **changes):
+        product = next(p for p in self.client.get('/api/state').json()['all_products'] if p['id'] == product_id)
+        response = self.client.put('/api/products/' + product_id, json=dict(product, **changes))
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def revise(self, order, **changes):
+        return self.client.put('/api/orders/' + order['id'], json=self.body(version=order['version'], **changes))
+
+    def test_revision_keeps_approved_price_and_status_for_unchanged_items(self):
+        order = self.advance(self.advance(self.create(), 'preparing'), 'ready')
+        self.edit_product('p_pandesal', price_cents=1500, name='Cheese pandesal (new)')
+        revised = self.revise(order, due_time='10:00')
+        self.assertEqual(revised.status_code, 200, revised.text)
+        self.assertEqual(revised.json()['fulfillment'], 'ready')
+        self.assertEqual(revised.json()['items'], order['items'])
+        changed = self.revise(revised.json(), items=[dict(product_id='p_pandesal', quantity=4, unit='dozen')])
+        self.assertEqual(changed.json()['total_cents'], 48 * 1500)
+        self.assertEqual(changed.json()['fulfillment'], 'queued')
+
+    def test_inactive_product_does_not_block_editing_other_order_details(self):
+        order = self.create()
+        self.edit_product('p_pandesal', active=False)
+        self.assertEqual(self.revise(order, due_time='11:00').status_code, 200)
+        latest = self.client.get('/api/state').json()['orders']
+        order = next(o for o in latest if o['id'] == order['id'])
+        self.assertEqual(self.revise(order, items=[dict(product_id='p_pandesal', quantity=4, unit='dozen')]).status_code, 400)
+
+    def test_out_for_delivery_address_can_be_corrected_after_catalog_edit(self):
+        order = self.create(method='delivery', address='Old St')
+        order = self.advance(self.advance(self.advance(order, 'preparing'), 'ready'), 'out_for_delivery')
+        self.edit_product('p_pandesal', price_cents=1500)
+        revised = self.revise(order, method='delivery', address='New St')
+        self.assertEqual(revised.status_code, 200, revised.text)
+        self.assertEqual(revised.json()['fulfillment'], 'out_for_delivery')
+
+    def test_message_burst_replaces_stale_extraction_instead_of_failing(self):
+        def send(mid, text):
+            raw = json.dumps(dict(object='page', entry=[dict(id='test_page', messaging=[dict(sender=dict(id='customer1'), message=dict(mid=mid, text=text))])])).encode()
+            signature = 'sha256=' + hmac.new(b'test-secret', raw, hashlib.sha256).hexdigest()
+            self.assertEqual(self.client.post('/api/facebook/webhook', content=raw, headers={'x-hub-signature-256': signature}).status_code, 200)
+        with patch.dict(os.environ, META_APP_SECRET='test-secret', META_VERIFY_TOKEN='verify', META_PAGE_ID='test_page'), patch.object(backend.WORKER, 'submit'):
+            send('message1', '2 dozen pandesal bukas')
+            send('message2', '9am pickup po')
+        jobs = self.client.get('/api/state').json()['jobs']
+        self.assertEqual([j['status'] for j in jobs], ['canceled', 'queued'])
+        self.assertEqual(jobs[1]['message_count'], 2)
+        backend.run_job(jobs[0]['id'])
+        self.assertEqual(self.client.get('/api/state').json()['jobs'][0]['status'], 'canceled')
+
+    def test_webhook_saves_messages_even_if_extraction_cannot_be_queued(self):
+        raw = json.dumps(dict(object='page', entry=[dict(id='test_page', messaging=[dict(sender=dict(id='customer1'), message=dict(mid='message1', text='hi'))])])).encode()
+        signature = 'sha256=' + hmac.new(b'test-secret', raw, hashlib.sha256).hexdigest()
+        with patch.dict(os.environ, META_APP_SECRET='test-secret', META_VERIFY_TOKEN='verify', META_PAGE_ID='test_page'), \
+                patch.object(backend, 'analyze', side_effect=RuntimeError('queue failed')), self.assertLogs('bentabuddy', 'ERROR'):
+            self.assertEqual(self.client.post('/api/facebook/webhook', content=raw, headers={'x-hub-signature-256': signature}).status_code, 200)
+        self.assertTrue(any(c['source'] == 'facebook' for c in self.client.get('/api/state').json()['conversations']))
+
+    def test_clarification_after_closed_order_can_be_confirmed_as_new_order(self):
+        first = self.advance(self.advance(self.advance(self.create(), 'preparing'), 'ready'), 'fulfilled')
+        with backend.connect() as db:
+            conv = backend.read_payload(db, 'conversations', 'conv_demo')
+            conv.update(linked_order_id=first['id'], customer_id=first['customer_id'], is_demo=False)
+            backend.write_payload(db, 'conversations', conv)
+        with patch.object(backend.WORKER, 'submit'):
+            job = self.client.post('/api/conversations/conv_demo/analyze', json={}).json()
+        with backend.connect() as db:
+            job.update(status='ready', proposal=dict(self.proposal(), action='needs_clarification'))
+            backend.write_payload(db, 'jobs', job)
+        second = self.client.post('/api/orders', json=self.body(job_id=job['id']))
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertNotEqual(second.json()['id'], first['id'])
+
+    def test_accommodation_must_be_priced_per_night(self):
+        self.client.put('/api/business', json={'kind': 'staycation', 'name': 'Stay'})
+        product = dict(name='Villa', category='Accommodations', price_cents=100000, unit='stay', offering_type='accommodation')
+        self.assertEqual(self.client.post('/api/products', json=product).status_code, 400)
+        self.assertEqual(self.client.post('/api/products', json=dict(product, unit='night')).status_code, 200)
+        service = self.client.post('/api/products', json=dict(product, offering_type='service')).json()
+        self.assertEqual(self.client.put('/api/products/' + service['id'], json=dict(service, offering_type='accommodation')).status_code, 400)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -26,6 +26,11 @@ class FacebookProfiles(unittest.TestCase):
         self.assertEqual(result['photo'], b'photo')
         self.assertEqual(len(calls), 2)
 
+    def test_long_names_fit_customer_and_order_forms(self):
+        def handler(request):
+            return httpx.Response(200, json=dict(first_name='A' * 80, last_name='B' * 80))
+        self.assertEqual(len(self.lookup(handler)['name']), 100)
+
     def test_untrusted_image_host_is_never_requested(self):
         calls = []
         def handler(request):

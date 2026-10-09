@@ -20,7 +20,7 @@ def fetch_profile(sender, token, version='v22.0'):
             data = response.json()
             if not isinstance(data, dict):
                 return {'status': 'unavailable'}
-            name = ' '.join(str(data.get(k) or '').strip() for k in ['first_name', 'last_name']).strip()[:200]
+            name = ' '.join(str(data.get(k) or '').strip() for k in ['first_name', 'last_name']).strip()[:100]
             result = {'status': 'available' if name else 'unavailable', 'name': name}
             photo = data.get('profile_pic')
             if not isinstance(photo, str):
