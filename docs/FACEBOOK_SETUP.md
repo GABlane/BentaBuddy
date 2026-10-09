@@ -1,10 +1,12 @@
-# Connect The Bakery Dev to BentaBuddy
+# Connect a Facebook Page to BentaBuddy
+
+The steps below use the team's test Page, The Bakery Dev, as an example. The owner confirmed live receipt and customer profiles during development. Each new installation still needs its own authorized Page, credentials, subscriptions, and permissions. Current prototype scope: [README.md](../README.md).
 
 The Page and Meta app are created. The Messenger API Settings screen has two independent setup sections: configuring the webhook and connecting a Page. Complete both, then subscribe the Page to message events.
 
 ## 1. Connect the Page in Meta
 
-Scroll down under **Generate access tokens** and choose the button to connect a Facebook Page. Select **The Bakery Dev** and complete Meta's authorization prompts using the account that manages it. Note the numeric **Page ID**. The generated Page access token is a secret; do not post it to chat or GitHub. This receiver does not send replies and currently does not store a Page access token.
+Scroll down under **Generate access tokens** and choose the button to connect a Facebook Page. Select your Page and complete Meta's authorization prompts using the account that manages it. Note the numeric **Page ID**. The generated Page access token is a secret; do not post it to chat or GitHub. The receiver does not send replies. Optional profile lookup uses a backend-only Page access token saved by the profile configuration helper below.
 
 ## 2. Save credentials locally
 
@@ -30,7 +32,7 @@ Keep BentaBuddy running. In a second Terminal, from the same project folder:
 ./scripts/start-facebook.sh
 ```
 
-This first checks the backend's verification handshake, starts a local webhook-only relay on loopback port 8001, and launches a Cloudflare Quick Tunnel. On Apple silicon it downloads the official cloudflared binary into `.runtime/` if needed. Installation and tunnel operation require internet. This coding session could not download cloudflared because GitHub DNS resolution was blocked; the Terminal script downloads it when run on the Mac. The actual public tunnel has not been started or tested here.
+This first checks the backend's verification handshake, starts a local webhook-only relay on loopback port 8001, and launches a Cloudflare Quick Tunnel. On Apple silicon it downloads the official cloudflared binary into `.runtime/` if needed. Installation and tunnel operation require internet. The owner confirmed live tunnel operation during development; verify the newly printed callback address for your current session.
 
 Find the generated `https://….trycloudflare.com` address in the output. Your **Callback URL** is that address followed by:
 
@@ -38,7 +40,7 @@ Find the generated `https://….trycloudflare.com` address in the output. Your *
 /api/facebook/webhook
 ```
 
-Only GET and POST to that exact webhook path are forwarded. The dashboard, management APIs, login, and inference server are not exposed by this relay. Cloudflare transports webhook traffic; AI interpretation and storage remain on the Mac.
+Only GET and POST to that exact webhook path are forwarded. The dashboard, management APIs, and inference server are not exposed by this relay. Cloudflare transports webhook traffic; AI interpretation and storage remain on the Mac.
 
 ## 4. Finish the Meta form
 
@@ -55,7 +57,7 @@ Complete the connected Page's webhook subscriptions and enable **messages**. If 
 
 In development, use a personal Facebook account with the administrator/developer/tester role on the Meta app (the Messenger setup screen explains this restriction). Send the Page a synthetic order as that personal profile. Messages sent as the Page are echoes and are ignored.
 
-Open BentaBuddy → **My real orders → Inbox**. Facebook events are always in the live workspace, separate from fictional seeded orders. A received text message should appear and queue local inference. Review and approve the proposal, then use **View in Preparation** to open its scheduled date. No automatic customer reply is sent.
+Open BentaBuddy → **Inbox**. The app opens directly in the live workspace. A received text message should appear and queue local inference. Review and approve the proposal, then open its scheduled work date. No automatic customer reply is sent.
 
 Keep both Terminals open. The Quick Tunnel address is temporary and changes when restarted; update the Meta callback URL and verify again if it changes. Internet is required for new Facebook events; previously received text and the local bakery workflow continue without it.
 
@@ -67,7 +69,7 @@ Keep both Terminals open. The Quick Tunnel address is temporary and changes when
 - Use the generated Verify token, not the App Secret or Page access token.
 - See `data/facebook-relay.log` for relay startup errors. Files under `data/` remain ignored.
 
-Implementation checks: 23 automated workflow/auth/parser/relay tests pass, including byte-for-byte preservation of signed payloads, challenge forwarding, private-route rejection, and failure handling. Live Meta verification, subscriptions, cloudflared startup, and message receipt still need the configured account and a real run.
+Implementation checks include signed-byte preservation, challenge forwarding, relay route restrictions, deduplication, and failure handling. The full project suite has 52 passing tests; model responses in automated tests are mocked. The owner confirmed live verification, tunnel operation, and receipt during development. Validate access with the actual accounts used in your demo; public access is not implied.
 
 Sources: [Meta Messenger API documentation](https://www.postman.com/meta/messenger-platform-api/documentation/iyp204x/messenger-platform-api), [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
 
@@ -84,6 +86,6 @@ Paste the Page access token at the hidden prompt. This preserves the existing we
 
 Names/photos appear in Inbox, Customers, and customer rankings when Meta allows access. Linked order names update too, without changing quantities, workflow state, or versions. Settings → **Refresh customer profiles** retries stored sender IDs. Failed lookups retain the last cached name/photo or the placeholder; messages and local extraction continue working.
 
-`META_PAGE_ACCESS_TOKEN` is backend-only and remains in the ignored local `.env`. The default Graph API version is `v22.0`; `META_GRAPH_VERSION` can be set to a supported version. Profiles refresh after one day on the next incoming message; unsuccessful lookups retry after an hour or on manual refresh. Photos are downloaded from approved Meta CDN hosts (JPEG/PNG/WebP, maximum 2 MB) into ignored `data/facebook-profiles`, served only to the signed-in owner, and remain available without internet. No token or remote photo URL is returned to the browser. Profile lookup is internet-dependent; inference remains local.
+`META_PAGE_ACCESS_TOKEN` is backend-only and remains in the ignored local `.env`. The default Graph API version is `v22.0`; `META_GRAPH_VERSION` can be set to a supported version. Profiles refresh after one day on the next incoming message; unsuccessful lookups retry after an hour or on manual refresh. Photos are downloaded from approved Meta CDN hosts (JPEG/PNG/WebP, maximum 2 MB) into ignored `data/facebook-profiles`, served through the local app (which currently has no sign-in), and remain available without internet. No token or remote photo URL is returned to the browser. Profile lookup is internet-dependent; inference remains local.
 
-Validation: automated tests cover profile success, denied access, image host/size restrictions, token isolation, private cached-photo serving, and preservation of order fields. Live Meta profile access still needs testing with your Page token and eligible customer account.
+Validation: automated tests cover profile success, denied access, image host/size restrictions, token isolation, cached-photo serving, and preservation of order fields. The owner confirmed live profiles during development; other accounts/installations still need permitted access. Cached photos are accessible through the local application, which currently has no sign-in.

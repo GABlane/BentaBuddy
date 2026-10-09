@@ -1,113 +1,145 @@
 # BentaBuddy
 
-A local-AI order manager for Filipino bakeries and home food sellers. Turn Taglish customer messages into an owner-reviewed order, then track preparation, fulfillment, verified payments, and repeat customers.
+**Your Facebook Page business buddy, powered by local AI.**
 
-**AI inference runs on the owner's computer.** Qwen3 4B reads the conversation and catalog through a loopback-only llama.cpp endpoint. No cloud AI key or service is used. Training a new model is not required.
+BentaBuddy turns customer conversations into owner-reviewed orders and bookings, then helps Filipino small businesses track the work through completion. It supports bakeries and food sellers, gadget shops, staycation hosts, and general product or service businesses.
 
-## Run on this Mac
+The web app, database, and AI run on the owner's computer. A phone opens the responsive website over the same local network. **No cloud AI API is used; the phone does not run the model.**
 
-The dependencies, production build, portable runtime, and verified 2.5 GB model are already installed in this workspace.
+For submission text and video narration, see [SUBMISSION.md](SUBMISSION.md). See [disclosures](docs/DISCLOSURES.md) and [validation evidence](docs/AI_VALIDATION.md).
 
-```bash
-cd BentaBuddy
-./scripts/start.sh
-```
+## Why it is needed
 
-Open **http://127.0.0.1:8000**. On first launch, create your local owner account with your bakery name, email, and a password of at least 10 characters. Future visits require login; the sidebar has a Log out button. This is one local bakery account, with no email verification or cloud account service. Keep the Terminal open; Ctrl+C stops the app and the model it launched. The model may take a little time to load. Settings shows model readiness; the runtime log is `data/local-ai.log`.
+For sellers who take orders through Facebook Pages, a conversation is also an informal order form. Customers use Taglish, change quantities, move pickup times, and add details across several messages. The owner must reconstruct the latest request while also preparing goods or serving customers.
 
-For a fresh Apple silicon checkout, install Node.js 22+ and Python 3.9+, then run:
+BentaBuddy is designed to reduce repeated copying, missed corrections, and scattered records. It connects the conversation to what the owner needs to prepare, pack, deliver, or reserve. Local inference avoids sending conversations to an additional cloud AI provider and lets the owner keep working with saved messages when internet access drops. These are product goals; the prototype does not claim measured business savings or error-reduction rates.
+
+## How it works
+
+1. Receive new text messages from an authorized Facebook Page, or paste a conversation into Inbox.
+2. Local AI reads the unreviewed request against the active business catalog and applies stated corrections.
+3. Review a structured draft, supporting message excerpts, and clarification questions.
+4. The owner edits and approves before an order or booking affects the workflow.
+5. Track preparation, dispatch, guest arrival, or service progress; record payments separately.
+6. View customer history, popular offerings, recorded payments, and fulfilled order value.
+
+Example: “2 dozen cheese pandesal bukas, pickup 8am” followed by “gawin na lang 3 dozen, 9am” should become a draft for **36 pieces at 9am tomorrow**, relative to the message timestamp. The owner checks the actual result before approval.
+
+## Tech stack
+
+| Layer | Technology | Role |
+| --- | --- | --- |
+| Frontend | React 19, TypeScript 5.7, Vite 6 | Responsive website and production build |
+| UI | CSS, Lucide icons, locally bundled Archivo font | Business themes and interface |
+| Backend | Python, FastAPI, Pydantic, Uvicorn | API, validation, workflows, frontend serving |
+| Storage | SQLite | Local catalogs, conversations, customers, jobs, orders, payments, events |
+| AI | Qwen3-4B-Instruct-2507, Q4_K_M GGUF | Language interpretation and structured drafts |
+| Inference runtime | llama.cpp; optional Ollama | Model execution on the owner's computer |
+| Messaging | Meta Messenger webhooks, optional User Profile API, HTTPX | New Page text messages and permitted names/photos |
+| Webhook transport | cloudflared / Cloudflare Quick Tunnel | HTTPS to a webhook-only local relay |
+| Validation | Python unittest, FastAPI TestClient, model smoke scripts, TypeScript/Vite build | Workflow and inference checks |
+
+Exact dependency versions are in `package-lock.json` and `requirements.lock.txt`.
+
+## What AI we use
+
+The default is **Qwen3-4B-Instruct-2507**, a pretrained 4-billion-parameter instruction model in **Q4_K_M quantized GGUF** format. The configured alias is `qwen3:4b-instruct-2507-q4_K_M`. llama.cpp serves it at `http://127.0.0.1:11434`. Startup disables thinking output and enables Apple silicon GPU offload. The development/demo host is an M4 Mac mini with 16 GB unified memory.
+
+We did **not** train or fine-tune the model. Our application supplies task-specific instructions, up to 25 messages from the current unreviewed request, message dates, the active catalog, and relevant approved-order context. It requests schema-constrained JSON for the action, items, schedule, fulfillment details, notes, questions, source excerpts, and booking details. There is no embeddings/vector-database pipeline.
+
+The model interprets language. Application code validates catalog IDs, units, quantities, dates, source quotations, and workflow transitions. Code calculates prices, dozen conversions, nights, booking conflicts, and analytics. Explicit separate purchases alongside open orders require an owner-selected boundary. Repeated model item lines require quantity clarification rather than increasing the total. Invalid or incomplete output fails visibly. **Human review remains required; there is no cloud inference fallback.**
+
+## Business workflows and modules
+
+| Business | Details | Workflow |
+| --- | --- | --- |
+| Bakery / food | Quantities, pickup/delivery, packaging | Preparation, ready, handoff, completion |
+| Gadgets | Devices/accessories, model/color/variant | Packing, dispatch, handoff |
+| Staycation | Individual units, dates, guests, nightly rates | Pending, confirmed, checked in, completed |
+| General | Products/services, schedule, service location | Scheduled work and fulfillment |
+
+Settings changes the business name/type, visual theme, labels, and catalog context. Each type has an editable catalog with example prices; switching back restores edits. Existing records and the connected Page remain saved. This does not create independent shop accounts or switch Facebook credentials.
+
+The app includes **Today, Inbox, Orders, a business-specific fulfillment board, Customers/Guests, Analytics, Catalog, and Settings**. Orders support revisions, filters, CSV export, activity history, and manual payment recording. Customer claims are not verified payments; fulfillment and payment are separate. Saved lines retain approved prices; explicit revisions use current catalog prices. Stale proposals/revisions are rejected.
+
+Staycation bookings include check-in/out, guests, and calculated nights. Each accommodation catalog entry represents one bookable unit. Pending requests do not hold dates. Confirmed-booking overlaps are checked transactionally; cancellation/completion releases dates. Checkout-day arrivals are allowed. Capacity pools and guest-limit enforcement are outside scope.
+
+## Offline and internet boundaries
+
+| Operation | Connectivity |
+| --- | --- |
+| Initial dependency/model download | Internet required |
+| New Facebook messages, fresh profile lookups, public tunnel | Internet required |
+| Saved messages and manual text imports | Offline |
+| Local extraction, review, orders/bookings, work boards, payments, analytics | Offline after setup |
+| Phone browser access | Local connection to the running Mac; internet not required |
+
+Meta already processes Messenger conversations, and Cloudflare transports webhook traffic online. The privacy benefit is **no additional cloud AI inference**, not that messages never enter the cloud. New Messenger messages do not arrive offline. Historical inbox retrieval is not implemented.
+
+## Run locally
+
+For a fresh Apple silicon checkout, install Node.js 22+ and Python 3.9+, then run from the repository root:
 
 ```bash
 ./scripts/setup.sh
 ./scripts/start.sh
 ```
 
-Setup needs internet to install dependencies and download the model. Subsequent startup, imports, inference, orders, and analytics work without internet. SQLite is at `data/bentabuddy.sqlite3`; back up the entire `data/` folder with the app stopped. No data is sent to analytics services.
+If dependencies, weights, and the frontend build are already installed, only `./scripts/start.sh` is needed. Open **http://127.0.0.1:8000**. Keep the Terminal open; Ctrl+C stops the app and any model it launched. Settings shows model readiness; logs are at `data/local-ai.log`.
 
-### Phone demo
+There is **no sign-in** in the current single-owner prototype. SQLite is at `data/bentabuddy.sqlite3`; back up the entire `data/` folder with the app stopped. Local data and credentials remain outside source control.
 
-The Mac mini hosts both the app and AI. The phone is a browser client; it does not run the model. Connect both to the same trusted Wi-Fi or local hotspot and start explicitly with:
+### Phone access
+
+Stop the existing app, connect the Mac and phone to the same trusted Wi-Fi/hotspot, and run:
 
 ```bash
 ./scripts/start-phone.sh
 ```
 
-Stop any existing BentaBuddy app process first (Ctrl+C in its Terminal), then run this command. It prints active local network URLs; open the matching `http://MAC_IP:8000` address on the phone and sign in with your existing bakery owner account. Leave the Facebook tunnel running. The address can change when switching networks. You can also find the Mac's Wi-Fi IP in System Settings → Wi-Fi → Details. A local network is required; an internet connection is not. macOS may ask to allow incoming connections. The dashboard and management API require the local owner login. The LAN demo uses HTTP, so use a trusted network and fictional data; do not use it as a public production deployment. Keep the AI port 11434 on loopback. Do not expose the full dashboard/API publicly.
+Open the printed `http://MAC_IP:8000` URL on the phone. Allow incoming connections if macOS asks. The Mac must remain running. Guest networks may isolate devices, and changing networks can change the IP. Anyone on the local network can use the app in phone mode; use a trusted network and fictional demo data. The Cloudflare URL cannot open the dashboard. Keep model port 11434 on loopback.
 
-### Optional Ollama runtime
+### Optional Ollama
 
-The generic `qwen3:4b` tag resolves to a Thinking-only model and is unsuitable for this extraction configuration. Use the pinned Instruct tag below. If you already have Ollama installed, run `ollama pull qwen3:4b-instruct-2507-q4_K_M` while online, then:
+With Ollama installed, download `qwen3:4b-instruct-2507-q4_K_M` while online, then run:
 
 ```bash
 BENTABUDDY_RUNTIME=ollama ./scripts/start.sh
 ```
 
-For an alternate installed model set `BENTABUDDY_MODEL` as well. Do not run both runtimes on port 11434. The bundled setup script targets Apple silicon; other machines can use the Ollama option after installing the app dependencies and building the frontend.
+Do not run both runtimes on port 11434. Use the pinned Instruct variant; the generic tag was unsuitable in the original tests. The bundled setup targets Apple silicon; other platforms need an appropriate local runtime and app dependencies.
 
-## What is built
+## Facebook integration and request boundaries
 
-| Module | Behavior |
-| --- | --- |
-| Today | Due orders, recorded payments, remaining preparation, handoffs, and review queue |
-| Inbox | Manual message imports, conversation follow-ups, local AI extraction, source excerpts, review/approval |
-| Orders | Create/revise, date/status/search filters, CSV export, owner-entered payments, activity history |
-| Preparation | Quantities in base units and fulfillment board, separated by due date |
-| Customers | Separate customer records, order history, fulfilled-order counts |
-| Analytics | Fulfilled order value, recorded payments, popular products and frequent customers by date range |
-| Catalog | Prices, supported units, availability, and Taglish/product aliases |
-| Settings | Actual local model status and Facebook setup information |
+Follow [Facebook setup](docs/FACEBOOK_SETUP.md) with your own authorized Page/app, permissions, secrets, and webhook subscription. The owner confirmed live receipt, profile display, corrections, and offline operation during development. Public-customer access remains dependent on Meta permissions and approval; eligible-account testing does not establish public access.
 
-**Demo bakery** starts with 55 fictional orders, eight customers, six products, and a sample conversation. Switch to **My real orders** for your own records. The catalog is shared between the two workspaces. AI drafts are never faked or preapproved.
+In a second Terminal, run `./scripts/start-facebook.sh`. Use the printed temporary HTTPS address plus `/api/facebook/webhook` as the Meta callback. Restarting the Quick Tunnel can change that address. Keep both app and tunnel running for live receipt. Only the webhook route is forwarded; the dashboard and model stay outside the public relay. The receiver verifies signatures, filters the configured Page, ignores echoes, deduplicates messages, stores text, and queues local inference. It sends no automatic replies.
 
-Owner approval is required before a message affects production. The save confirmation and approved Inbox message include **View in Preparation**, which opens the order’s scheduled date and highlights its card. Preparation remembers the selected date and provides Today, Tomorrow, upcoming-date, and overdue shortcuts. Quantity conversions are shown during review before approval. Dozens convert to 12 pieces. Revisions update the same order and reject stale versions; item changes return the order to the queue. Prices are copied into approved order lines; later catalog edits do not alter saved orders, while explicitly revising an order uses current prices. Delivery and pickup follow different transitions. Fulfillment does not imply payment. Only an owner-recorded payment affects the payment balance. Canceled orders retain their payment history for refund review.
+Extraction uses messages since the last approval and the active order as revision context. Closed orders are excluded. For a separate purchase while an order is open, select **Start new order here** on its first message; earlier orders and customer history stay saved.
 
-## Facebook Page integration
+## Demo and sample records
 
-Follow [docs/FACEBOOK_SETUP.md](docs/FACEBOOK_SETUP.md) for the local credential helper and webhook-only HTTPS tunnel.
+Show a conversation/correction, real local extraction and evidence, owner approval, scheduled work, and customer/analytics views. Then disconnect upstream internet while keeping the local network connected, paste a fresh request, and demonstrate real extraction and saving. A dashboard alone does not demonstrate offline AI. Label fictional records and time-compressed video sections. See [SUBMISSION.md](SUBMISSION.md) for narration.
 
-The signed webhook receiver is implemented; **a real Page is not connected yet**. Use Inbox → Import message for a reliable demo until your own Meta app/Page access is ready. The importer is labeled manual and does not impersonate Messenger.
-
-Copy `.env.example` to `.env` and fill in your own values. Start scripts load it server-side. In your Meta app configure the Messenger Page webhook callback as your public HTTPS relay's `/api/facebook/webhook`, verify using `META_VERIFY_TOKEN`, and subscribe your authorized Page to message events. Live availability depends on your Meta app permissions, review/access status, and Page subscription; merely setting secrets does not establish that access.
-
-The relay must forward **only** `/api/facebook/webhook` to this machine. Preserve raw POST bytes and `X-Hub-Signature-256` so signature verification succeeds. Keep management APIs private. Receiver verifies signatures, filters the configured Page, ignores message echoes, deduplicates message IDs, stores the text locally, and queues local inference. It does not send customer replies or retrieve historical messages. Optional customer names/photos use a separate Meta profile lookup: run `.venv/bin/python -B scripts/configure-facebook-profile.py`, enter a fresh Page access token privately, restart the app, and send a new message. Photos are cached locally; denied access retains the placeholder. See [Facebook setup](docs/FACEBOOK_SETUP.md). Without live Facebook access, do not claim the demo is connected.
-
-Internet is necessary for receiving new Facebook events. When it drops, previously received conversations, local AI extraction, imported text, and bakery operations continue locally.
-
-## Demo flow (about one minute)
-
-1. Open Demo bakery → Inbox → the sample Mika conversation. Click local AI extraction; let the real model finish.
-2. Show the original “2 dozen” followed by “gawin na lang 3 dozen, 9am.” Review the expected **36 pieces**, tomorrow relative to the message timestamp, pickup at 9 AM. Correct any model error openly before approval.
-3. Approve and open Preparation. Select the requested date to show the new quantity.
-4. Add a follow-up “Gawin na lang 4 dozen, same pickup time,” extract again, and approve the revision. Show **48 pieces on the same order**.
-5. Mark preparing → ready → fulfilled and record a payment separately. Show customers/analytics.
-
-For the offline portion, disconnect upstream internet while keeping the Mac/phone local network connected. Re-run extraction on an imported message. An actual successful offline extraction is the evidence of local AI; a dashboard alone is insufficient. Record latency from your real run rather than claiming benchmark numbers.
+Fresh installations seed catalogs without fictional activity. Optional `.venv/bin/python -B scripts/seed-demo-messages.py` adds labeled sample conversations for all four business types; `--remove` removes those samples while keeping orders approved from them. `.venv/bin/python -B scripts/clear-demo.py` removes legacy demo activity. Both helpers back up data first. Requested sample orders are fictional records, not actual sales.
 
 ## Development and validation
 
 ```bash
 npm test
 npm run build
-# Optional frontend development, alongside the backend:
 npm run dev
+# Actual inference against the running local model, using temporary test data:
+.venv/bin/python -B scripts/check-ai.py
+.venv/bin/python -B scripts/check-business-ai.py
 ```
 
-React + TypeScript + Vite frontend; FastAPI backend; SQLite; Qwen3 4B quantized GGUF; llama.cpp or Ollama local inference. Single-process AI queue with persisted job status. Restart marks interrupted jobs failed and allows retry; no cloud fallback.
+As of October 10, 2026, **52 automated tests and the production build pass**. Automated model responses are mocked. Separate real local-model checks passed core order scenarios and four business-theme scenarios using CPU CLI inference and temporary databases. Those checks do not verify the running HTTP server/browser or establish general model accuracy. Owner-confirmed live demonstrations are separate evidence. See [AI validation](docs/AI_VALIDATION.md) for failures, fixes, timings, CLI options, and reproduction.
 
-Verified during implementation: production compilation, 32 business workflow/auth/parser/relay/profile tests using FastAPI's in-process TestClient, model checksum, and dependency lock consistency. Tests cover units, stale revisions, approval, local-only model transport, source evidence, fulfillment, payments/idempotency, cancellations, persistence recovery, and signed webhook deduplication, login/logout, hashed credentials, session expiry, and cross-origin mutation rejection. **Model calls in the automated suite are mocked.** Three additional real local CPU inference checks passed: the corrected 36-piece order at 09:00 tomorrow, a 48-piece revision preserving its schedule, and inquiry classification. See [docs/AI_VALIDATION.md](docs/AI_VALIDATION.md) for actual timings and reproduction. This session cannot reach local server ports or use a browser, so production HTTP extraction after restart, phone behavior, and visual browser QA remain unverified. Run `.venv/bin/python -B scripts/check-ai.py` from a second Terminal after starting the app to exercise the real HTTP model transport without changing bakery records.
+## Current scope and disclosures
 
-Current scope limits: single owner account, no password-reset email or multi-shop separation, no refund ledger, no partial preparation quantities, no inventory or ingredient forecasting, no automatic Messenger replies, no historical message sync. Relative dates and Taglish interpretation require model evaluation. Long conversations use the latest 25 messages; AI outputs still require human review. Older overdue orders are available using Orders date filters and the preparation date picker rather than included in today's preparation total.
+No sign-in or multi-shop isolation, automatic replies, social publishing, comment moderation, historical inbox sync, message image/audio processing, payment verification/collection, courier integration, inventory/ingredient forecasting, or AI sales predictions. AI outputs require owner review.
 
-See [BUILD_PLAN.md](BUILD_PLAN.md) for event criteria and [docs/DISCLOSURES.md](docs/DISCLOSURES.md) for model and tool disclosures. Target repository: https://github.com/GABlane/BentaBuddy. To publish from your own Terminal, run `./scripts/publish-github.sh`; it signs in through GitHub CLI if needed, adds the remote, commits as GABlane without a co-author trailer, and pushes to main. The social post and final hackathon submission remain the team’s responsibility; no event submission has been performed.
+Codex assisted development; it is not the product's inference provider. See [model/tool/asset disclosures](docs/DISCLOSURES.md). [BUILD_PLAN.md](BUILD_PLAN.md) records planning/event notes; this README describes the current implementation.
 
-Team live validation: the owner confirmed Meta webhook verification, receipt of a real Messenger message, local extraction of 20 cheese pandesal for October 10 at 10 AM, and a follow-up correction to 30 pieces at noon. Optional profile lookups remain unverified with live Meta credentials.
-
-
-### Separate purchases in one conversation
-
-Extraction uses messages since the last approval and the active approved order as context for revisions. Completed/canceled order items are excluded. If no new messages exist, extraction stops instead of proposing an old order again. The full conversation remains visible.
-
-For a separate purchase while a previous order is still open (or to separate multiple unapproved requests), click **Start new order here** beneath the first message of the new purchase. Confirm the change, then review the new proposal. The chosen message and later messages form the request; earlier confirmed orders remain saved and customer history is preserved. This replaces pending drafts and rejects stale approvals. Existing saved conversations recover their last approved boundary from approval jobs where available.
-
-
-Phone connection troubleshooting: enter `http://` explicitly, use port `8000`, and ensure the app was started with `scripts/start-phone.sh`. If prompted by macOS, allow incoming connections for the local Python app. Guest/venue Wi-Fi may isolate devices; use a trusted shared network or hotspot that permits device-to-device access. The Cloudflare URL forwards only Facebook webhooks and cannot open the dashboard. For an offline phone demonstration, keep local Wi-Fi connected while disconnecting upstream internet. Starting normally with `./scripts/start.sh` returns to loopback access unless `.env` explicitly sets another host. An explicit `BENTABUDDY_HOST` command override takes precedence over `.env`.
+Repository: [GABlane/BentaBuddy](https://github.com/GABlane/BentaBuddy). The team handles the final video, social post, and hackathon submission; this documentation update does not publish or submit them.

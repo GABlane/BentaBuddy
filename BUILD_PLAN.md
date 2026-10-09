@@ -1,4 +1,6 @@
-# BentaBuddy — local AI bakery order manager
+# BentaBuddy — build plan and event notes
+
+Current implementation and submission descriptions are in [README.md](README.md) and [SUBMISSION.md](SUBMISSION.md). The bakery was the initial use case; the implemented product also supports gadgets, staycations, and general businesses. Planning targets below are not independent proof of implementation or validation.
 
 ## Product decision
 
@@ -6,7 +8,7 @@ Replace the earlier offline study concept with a responsive order-management web
 
 Product promise: turn messy customer conversations into reviewed orders, then help the owner know what to prepare, what to fulfill, and what customers buy most often.
 
-Status: eight modules and local owner login implemented. Production build and 32 automated workflow/auth/parser/relay/profile tests pass. The owner confirmed real Facebook delivery, customer names/photos, Taglish quantity/time corrections, and offline operation. Request scoping now separates reviewed messages from new requests, with an explicit new-purchase boundary. Remaining gates: expanded Taglish accuracy checks, phone/browser verification, approved-order revision and complete fulfillment demo, current repository publication, and hackathon materials. See docs/AI_VALIDATION.md for model test scope.
+Status on October 10: eight modules and four business themes implemented; sign-in was removed for the single-owner prototype. Production build and 52 automated tests pass. Separate real local CPU model checks cover core order scenarios and all four themes. The owner confirmed real Facebook delivery, customer names/photos, corrections, and offline operation. The repository is published; final video, social post, and submission are handled by the team. See [docs/AI_VALIDATION.md](docs/AI_VALIDATION.md) for test scope and the distinction between CLI inference checks and live browser evidence.
 
 ## Event constraints
 
@@ -91,13 +93,13 @@ Historical conversation import is a separate permission-dependent feature, not a
 
 Internet is required for Facebook ingestion and any optional external export. Local review, preparation, analytics, and saved-message inference remain available without internet. Mac must be running for local inference; a phone is a browser client over LAN, not an independent AI host. Facebook already holds the messages, so privacy claim is specifically no extra cloud AI inference, not that data never enters the cloud.
 
-Default application binds locally. Optional phone access can be explicitly enabled on a trusted LAN; a local owner account and expiring server-side sessions protect the management API. This remains a single-owner prototype. Keep the inference runtime on loopback. Use production assets bundled locally; no cloud inference fallback.
+Default application binds locally. Optional phone access can be explicitly enabled on a trusted LAN. There is no sign-in (single-user demo), so anyone on that network can use the app while phone mode runs; cross-origin writes are still rejected. This remains a single-owner prototype. Keep the inference runtime on loopback. Use production assets bundled locally; no cloud inference fallback.
 
 ## Data design and AI boundary
 
 Core entities: shop, products/variants/unit conversions, customers, conversations, messages, AI proposals, orders, order items, revisions, fulfillment events, payments, and jobs. Persist processing states and recover interrupted jobs. Single model worker for the demo.
 
-AI generates bounded JSON matching a schema, including action (inquiry/new order/change/cancel/needs clarification), known product IDs, extracted fields, source references, and unresolved questions. Backend validates IDs, quantities, units, source excerpts, dates, and schema; rejects unsupported references and retries malformed output once.
+AI generates bounded JSON matching a schema, including action (inquiry/new order/change/cancel/needs clarification), known product IDs, extracted fields, source references, and unresolved questions. Backend validates IDs, quantities, units, source excerpts, and dates. Invalid or truncated output fails visibly and can be retried by the owner; no automatic model retry is claimed.
 
 Use message timestamps and Asia/Manila context for relative dates, show exact resolved dates for review, and ask when interpretation is ambiguous. Retain enough conversation and current approved-order context to understand a correction. Key extraction to conversation revision; stale model output cannot overwrite a newer draft/approved revision.
 
@@ -150,6 +152,9 @@ Repository must disclose exact model/runtime, APIs, frameworks, code/assets, Cod
 - Local model candidate: https://ollama.com/library/qwen3:4b-instruct-2507-q4_K_M
 - Structured outputs: https://docs.ollama.com/capabilities/structured-outputs
 
-## Local owner login implemented
+## Local owner login (removed)
+
+Removed on 2026-10-10: the app is a single-user demo and opens without sign-in. The notes below describe the former implementation.
+
 
 First launch creates a single local bakery owner account. Later visits require email/password login. Credentials use salted PBKDF2-SHA256 hashes; random session cookies are HttpOnly and SameSite Strict, backed by hashed session identifiers in SQLite and a 24-hour expiry. Logout revokes the session. Management APIs require authentication; Meta signature verification still protects the public webhook. Sign-in UI uses a bundled generated bakery photo with CSS blur and a centered cream card. No cloud identity service or email recovery is used.

@@ -21,14 +21,308 @@ class Workflows(unittest.TestCase):
         self.original_db = backend.DB
         backend.DB = Path(self.directory.name) / 'test.sqlite3'
         backend.init_db()
+        with backend.connect() as db:
+            backend.seed(db, include_demo=True)
         self.client = TestClient(backend.app)
-        response = self.client.post('/api/auth/setup', json=dict(email='owner@example.test', password='test-password-123', bakery_name='Test bakery'))
-        self.assertEqual(response.status_code, 200, response.text)
 
     def tearDown(self):
         self.client.close()
         backend.DB = self.original_db
         self.directory.cleanup()
+
+    def test_business_theme_persists_without_changing_records(self):
+        before = self.client.get('/api/state').json()
+        for kind in ('gadgets', 'staycation', 'general', 'bakery'):
+            response = self.client.put('/api/business', json={'kind':kind,'name':'  My negosyo  '})
+            self.assertEqual(response.status_code, 200, response.text)
+            state = self.client.get('/api/state').json()
+            self.assertEqual(state['business'], {'kind':kind,'name':'My negosyo'})
+            for field in ('orders','customers','conversations'):
+                self.assertEqual(state[field], before[field])
+            for product in before['products']:
+                self.assertEqual(next(p for p in state['all_products'] if p['id']==product['id']), product)
+        self.assertEqual(self.client.put('/api/business', json={'kind':'unknown','name':'Shop'}).status_code, 400)
+        self.assertEqual(self.client.put('/api/business', json={'kind':'gadgets','name':'   '}).status_code, 400)
+
+    def test_gadget_catalog_and_local_ai_use_business_context(self):
+        self.client.put('/api/business', json={'kind':'gadgets','name':'Gadget Suki'})
+        result = self.client.post('/api/products', json={'name':'USB-C cable','category':'Accessories','price_cents':15000,'unit':'piece','aliases':['charging cable'],'emoji':'🔌'})
+        self.assertEqual(result.status_code, 200, result.text)
+        product = result.json()
+        self.assertEqual(product['units'], {'piece':1})
+        conversation = {'messages':[{'id':'test_message','text':'Pa-order 2 charging cables','created_at':backend.now()}]}
+        _, request = backend.extraction_request(conversation, [product], None)
+        prompt = request['messages'][0]['content']
+        context = json.loads(request['messages'][1]['content'])
+        self.assertIn('gadgets business', prompt)
+        self.assertNotIn('You extract bakery orders', prompt)
+        self.assertEqual(context['business']['name'], 'Gadget Suki')
+        self.assertEqual(context['catalog'][0]['id'], product['id'])
+        self.client.put('/api/business', json={'kind':'staycation','name':'Our Stay'})
+        _, request = backend.extraction_request(conversation, [product], None)
+        self.assertIn('never claim availability or confirm a booking', request['messages'][0]['content'])
+
+    def test_business_catalog_switching_preserves_customized_offerings(self):
+        self.client.put('/api/business', json={'kind':'staycation','name':'Our Stay'})
+        state = self.client.get('/api/state').json()
+        stays = backend.catalog_for(state['products'], 'staycation')
+        self.assertEqual(len(stays), 4)
+        self.assertTrue(all(p['active'] and p['price_cents']>0 and p['sample_pricing'] for p in stays))
+        studio = next(p for p in stays if p['offering_type']=='accommodation')
+        updated = dict(studio, name='Cozy studio', price_cents=250000, active=True)
+        self.assertEqual(self.client.put('/api/products/'+studio['id'], json=updated).status_code, 200)
+        order = self.create(items=[{'product_id':studio['id'],'quantity':2,'unit':'night'}], reservation={'product_id':studio['id'],'check_in':backend.today(),'check_out':(backend.datetime.now(backend.TZ)+backend.timedelta(days=2)).date().isoformat(),'guests':2,'status':'pending'})
+        self.assertEqual(order['total_cents'], 500000)
+        self.client.put('/api/business', json={'kind':'gadgets','name':'My Gadget Shop'})
+        rejected = self.client.post('/api/orders', json=self.body(items=[{'product_id':studio['id'],'quantity':1,'unit':'night'}]))
+        self.assertEqual(rejected.status_code, 400)
+        self.client.put('/api/business', json={'kind':'staycation','name':'Our Stay'})
+        state = self.client.get('/api/state').json()
+        saved = next(p for p in state['products'] if p['id']==studio['id'])
+        self.assertEqual(saved['name'], 'Cozy studio')
+        self.assertEqual(saved['price_cents'], 250000)
+        self.assertTrue(saved['active'])
+        self.assertEqual(len(backend.catalog_for(state['products'], 'staycation')), 4)
+        self.assertEqual(next(o for o in state['orders'] if o['id']==order['id'])['total_cents'], 500000)
+
+    def test_local_ai_catalog_excludes_other_businesses_and_inactive_starters(self):
+        self.client.put('/api/business', json={'kind':'gadgets','name':'Shop'})
+        product = self.client.post('/api/products', json={'name':'Cable','category':'Accessories','price_cents':10000,'unit':'piece','aliases':['cable'],'active':True}).json()
+        state = self.client.get('/api/state').json()
+        starter = next(p for p in state['products'] if p['id']!=product['id'])
+        self.client.put('/api/products/'+starter['id'], json=dict(starter, active=False))
+        products = self.client.get('/api/state').json()['all_products']
+        conversation = {'messages':[{'id':'m','text':'One cable please','created_at':backend.now()}]}
+        _, request = backend.extraction_request(conversation, products, None)
+        context = json.loads(request['messages'][1]['content'])
+        self.assertEqual({p['id'] for p in context['catalog']}, {p['id'] for p in products if p.get('business_kind')=='gadgets' and p['active']})
+        self.assertNotIn(starter['id'], [p['id'] for p in context['catalog']])
+        conversation['is_demo'] = True
+        _, request = backend.extraction_request(conversation, products, None)
+        context = json.loads(request['messages'][1]['content'])
+        self.assertEqual(context['business']['kind'], 'bakery')
+        self.assertIn('p_pandesal', [p['id'] for p in context['catalog']])
+        self.assertNotIn(product['id'], [p['id'] for p in context['catalog']])
+
+    def test_state_catalog_tracks_business_switches_and_preserves_history(self):
+        initial = self.client.get('/api/state').json()
+        for kind in ('staycation', 'gadgets', 'general', 'bakery', 'staycation'):
+            self.client.put('/api/business', json={'kind':kind,'name':'Test business'})
+            state = self.client.get('/api/state').json()
+            self.assertTrue(state['products'])
+            self.assertTrue(all(p.get('business_kind', 'bakery')==kind for p in state['products']))
+            self.assertEqual(state['orders'], initial['orders'])
+            self.assertTrue(any(p['id']=='p_pandesal' for p in state['all_products']))
+        self.assertEqual(self.client.get('/').headers.get('cache-control'), 'no-store, max-age=0')
+
+    def test_theme_switch_preserves_disabled_starter_and_upgrades_only_untouched_drafts(self):
+        self.client.put('/api/business', json={'kind':'gadgets','name':'Shop'})
+        products = self.client.get('/api/state').json()['products']
+        disabled, draft = products[:2]
+        self.client.put('/api/products/'+disabled['id'], json=dict(disabled, active=False, price_cents=12345))
+        legacy = dict(draft, price_cents=0, active=False,
+                      description='Suggested offering. Edit the details and price before enabling requests.')
+        legacy.pop('sample_pricing')
+        with backend.connect() as db:
+            backend.write_payload(db, 'products', legacy)
+        for kind in ('staycation','gadgets'):
+            self.client.put('/api/business', json={'kind':kind,'name':'Shop'})
+        products = self.client.get('/api/state').json()['products']
+        saved = next(p for p in products if p['id']==disabled['id'])
+        upgraded = next(p for p in products if p['id']==draft['id'])
+        self.assertFalse(saved['active'])
+        self.assertEqual(saved['price_cents'], 12345)
+        self.assertFalse(saved['sample_pricing'])
+        self.assertTrue(upgraded['active'])
+        self.assertTrue(upgraded['sample_pricing'])
+        self.assertGreater(upgraded['price_cents'], 0)
+
+    def test_fresh_install_does_not_seed_demo_activity(self):
+        original = backend.DB
+        try:
+            backend.DB = Path(self.directory.name) / 'fresh.sqlite3'
+            backend.init_db()
+            with backend.connect() as db:
+                for table in ('orders','customers','conversations','jobs'):
+                    self.assertEqual(backend.payloads(db, table), [])
+                self.assertTrue(backend.payloads(db, 'products'))
+        finally:
+            backend.DB = original
+
+    def test_sample_conversations_cover_each_business_and_remove_cleanly(self):
+        from backend.sample_conversations import remove_sample_conversations, seed_sample_conversations
+        real = self.client.post('/api/conversations', json=dict(customer_name='Real customer', text='Pa-order po 1 cake')).json()
+        with backend.connect() as db:
+            self.assertEqual(seed_sample_conversations(db), 14)
+            self.assertEqual(seed_sample_conversations(db), 0)
+        conversations = self.client.get('/api/state').json()['conversations']
+        samples = [c for c in conversations if c.get('is_sample')]
+        self.assertEqual({k: sum(c['business_kind'] == k for c in samples) for k in ('bakery', 'gadgets', 'staycation', 'general')},
+                         {'bakery': 4, 'gadgets': 4, 'staycation': 3, 'general': 3})
+        for conversation in samples:
+            self.assertFalse(conversation['is_demo'])
+            self.assertEqual(conversation['version'], len(conversation['messages']))
+            with backend.connect() as db:
+                scoped, current = backend.extraction_scope(db, conversation)
+            self.assertEqual(len(scoped['messages']), len(conversation['messages']))
+            backend.extraction_request(scoped, self.client.get('/api/state').json()['all_products'], current)
+        conversation = next(c for c in samples if c['business_kind'] == 'bakery')
+        order = self.client.post('/api/orders', json=self.body(customer_name=conversation['customer_name'], customer_id=conversation['customer_id'])).json()
+        with backend.connect() as db:
+            self.assertEqual(remove_sample_conversations(db), 14)
+        state = self.client.get('/api/state').json()
+        ids = [c['id'] for c in state['conversations']]
+        self.assertIn(real['id'], ids)
+        self.assertFalse([key for key in ids if key.startswith('conv_sample_')])
+        self.assertIn(order['id'], [o['id'] for o in state['orders']])
+        self.assertIn(conversation['customer_id'], [c['id'] for c in state['customers']])
+
+    def test_requested_live_sample_orders_are_labeled_and_seeded_once(self):
+        from backend.sample_orders import seed_sample_orders
+        with backend.connect() as db:
+            before = {o['id']:o for o in backend.payloads(db, 'orders')}
+            self.assertEqual(seed_sample_orders(db), 6)
+            self.assertEqual(seed_sample_orders(db), 0)
+            after = backend.payloads(db, 'orders')
+            for order in after:
+                if order['id'] in before:
+                    self.assertEqual(order, before[order['id']])
+                else:
+                    self.assertTrue(order['is_sample'])
+                    self.assertFalse(order['is_demo'])
+                    self.assertEqual(order['payments'], [])
+                    self.assertIn(order['business_kind'], ('gadgets','staycation'))
+                    self.assertTrue(order['customer_name'].startswith('Sample · '))
+            self.assertEqual(len({o['number'] for o in after}), len(after))
+
+    def booking_body(self, **changes):
+        self.client.put('/api/business', json={'kind':'staycation','name':'Stay'})
+        body=self.body(items=[{'product_id':'p_staycation_starter_studio','quantity':99,'unit':'night'}],
+                       reservation={'product_id':'p_staycation_starter_studio','check_in':'2026-11-01','check_out':'2026-11-03','guests':2,'status':'confirmed'},
+                       due_date='2026-11-01')
+        body.update(changes)
+        return body
+
+    def test_reservations_calculate_nights_and_reject_overlaps(self):
+        body=self.booking_body()
+        response=self.client.post('/api/orders',json=body)
+        self.assertEqual(response.status_code,200,response.text)
+        first=response.json()
+        self.assertEqual(first['items'][0]['quantity'],2)
+        self.assertEqual(first['total_cents'],500000)
+        self.assertEqual(first['fulfillment'],'preparing')
+        self.assertEqual(self.client.post('/api/orders',json=body).status_code,409)
+        status=self.client.get('/api/reservations/availability',params={'product_id':body['reservation']['product_id'],'check_in':'2026-11-02','check_out':'2026-11-04'}).json()
+        self.assertFalse(status['available'])
+        # Half-open stays allow a new guest to arrive on the preceding guest's checkout date.
+        adjacent=dict(body,reservation=dict(body['reservation'],check_in='2026-11-03',check_out='2026-11-04'))
+        self.assertEqual(self.client.post('/api/orders',json=adjacent).status_code,200)
+        different=dict(body,items=[{'product_id':'p_staycation_starter_family','quantity':1,'unit':'night'}],reservation=dict(body['reservation'],product_id='p_staycation_starter_family'))
+        self.assertEqual(self.client.post('/api/orders',json=different).status_code,200)
+        self.advance(first,'cancel')
+        self.assertEqual(self.client.post('/api/orders',json=body).status_code,200)
+
+    def test_pending_booking_checks_availability_at_confirmation_and_completion(self):
+        body=self.booking_body()
+        pending=self.client.post('/api/orders',json=dict(body,reservation=dict(body['reservation'],status='pending'))).json()
+        first=self.client.post('/api/orders',json=body).json()
+        response=self.client.post('/api/orders/'+pending['id']+'/transition',json={'action':'preparing','version':pending['version']})
+        self.assertEqual(response.status_code,409)
+        checked_in=self.advance(first,'ready')
+        self.assertEqual(checked_in['reservation']['status'],'checked_in')
+        completed=self.advance(checked_in,'fulfilled')
+        self.assertEqual(completed['reservation']['status'],'completed')
+        confirmed=self.advance(pending,'preparing')
+        self.assertEqual(confirmed['reservation']['status'],'confirmed')
+        update=dict(body,version=confirmed['version'],reservation=dict(body['reservation'],guests=3))
+        self.assertEqual(self.client.put('/api/orders/'+confirmed['id'],json=update).status_code,200)
+
+    def test_invalid_booking_dates_guests_and_missing_booking_rejected(self):
+        body=self.booking_body()
+        for reservation in [dict(body['reservation'],check_out='2026-11-01'),dict(body['reservation'],check_in='invalid'),dict(body['reservation'],guests=0)]:
+            self.assertIn(self.client.post('/api/orders',json=dict(body,reservation=reservation)).status_code,(400,422))
+        self.assertEqual(self.client.post('/api/orders',json=dict(body,reservation=None)).status_code,400)
+
+    def test_business_specific_details_survive_revisions_and_fulfillment(self):
+        for kind, field, value, product in [('bakery','packaging','Two gift boxes','p_pandesal'),('gadgets','variant','Blue 128GB','p_gadgets_starter_phone'),('general','service_location','Customer office','p_general_starter_service')]:
+            self.client.put('/api/business',json={'kind':kind,'name':'Test'})
+            unit='piece' if kind=='bakery' else 'unit' if kind=='gadgets' else 'service'
+            body=self.body(items=[{'product_id':product,'quantity':1,'unit':unit}],**{field:value})
+            response=self.client.post('/api/orders',json=body)
+            self.assertEqual(response.status_code,200,response.text)
+            order=response.json()
+            self.assertEqual(order[field],value)
+            revised=self.client.put('/api/orders/'+order['id'],json=dict(body,version=order['version'])).json()
+            for action in ('preparing','ready','fulfilled'):
+                revised=self.advance(revised,action)
+            self.assertEqual(revised[field],value)
+            self.assertEqual(revised['fulfillment'],'fulfilled')
+
+    def test_simultaneous_booking_confirmations_reserve_only_one_unit(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from fastapi import HTTPException
+        body=self.booking_body()
+        def reserve():
+            try:
+                backend.save_order(backend.OrderBody(**body))
+                return 200
+            except HTTPException as error:
+                return error.status_code
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            self.assertEqual(sorted(pool.map(lambda _:reserve(),range(2))), [200,409])
+
+    def test_local_booking_drafts_require_dates_and_remain_pending(self):
+        self.client.put('/api/business',json={'kind':'staycation','name':'Stay'})
+        conv={'messages':[{'id':'booking_message','text':'Studio stay for 2 guests November 1 to November 3, 2026, arrive 2pm.','created_at':backend.now()}]}
+        proposal=dict(action='new_order',items=[{'product_id':'p_staycation_starter_studio','quantity':99,'unit':'night'}],due_date='2026-11-01',due_time='14:00',method='pickup',address='',notes='',questions=[],evidence=[{'message_id':'booking_message','quote':conv['messages'][0]['text']}])
+        with backend.connect() as db:
+            missing=backend.validate_proposal(db,dict(proposal,questions=[]),conv)
+            self.assertEqual(missing['action'],'needs_clarification')
+            complete=backend.validate_proposal(db,dict(proposal,questions=[],reservation={'product_id':'p_staycation_starter_studio','check_in':'2026-11-01','check_out':'2026-11-03','guests':2,'status':'confirmed'}),conv)
+            self.assertEqual(complete['items'][0]['quantity'],2)
+            self.assertEqual(complete['reservation']['status'],'pending')
+
+    def test_extraction_output_is_bounded_and_context_has_no_payment_history(self):
+        conv={'messages':[{'id':'bounded_message','text':'2 cookies please','created_at':backend.now()}]}
+        current={'id':'existing','items':[], 'due_date':backend.today(),'due_time':'09:00','method':'pickup','address':'Known address','notes':'','payments':[{'id':'sensitive-payment-history'}],'customer_name':'Private name','version':99}
+        with backend.connect() as db:
+            products=backend.payloads(db,'products')
+        _,request=backend.extraction_request(conv,products,current)
+        schema=request['response_format']['json_schema']['schema'] if 'response_format' in request else request['format']
+        fields=schema['properties']
+        self.assertEqual(fields['questions']['maxItems'],4)
+        self.assertEqual(fields['evidence']['maxItems'],6)
+        self.assertEqual(fields['notes']['maxLength'],400)
+        self.assertEqual(fields['evidence']['items']['properties']['message_id']['enum'],['bounded_message'])
+        self.assertIn('p_cookie',fields['items']['items']['properties']['product_id']['enum'])
+        context=json.loads(request['messages'][1]['content'])
+        self.assertNotIn('payments',context['current_approved_order'])
+        self.assertNotIn('customer_name',context['current_approved_order'])
+        self.assertEqual(context['current_approved_order']['address'],'Known address')
+
+    def test_extraction_retains_conversation_business_when_selected_theme_changes(self):
+        self.client.put('/api/business',json={'kind':'gadgets','name':'Shop'})
+        conv={'business_kind':'bakery','messages':[{'id':'m','text':'2 cookies','created_at':backend.now()}]}
+        with backend.connect() as db:products=backend.payloads(db,'products')
+        _,request=backend.extraction_request(conv,products,None)
+        context=json.loads(request['messages'][1]['content'])
+        self.assertEqual(context['business']['kind'],'bakery')
+        self.assertIn('p_cookie',[p['id'] for p in context['catalog']])
+        self.assertNotIn('p_gadgets_starter_phone',[p['id'] for p in context['catalog']])
+
+    def test_explicit_separate_purchase_cannot_be_generated_as_an_open_order_revision(self):
+        conv={'messages':[{'id':'separate','text':'Separate order po: 2 cookies','created_at':backend.now()}]}
+        with backend.connect() as db:products=backend.payloads(db,'products')
+        for current in (None,{'id':'existing','items':[]}):
+            _,request=backend.extraction_request(conv,products,current)
+            fields=(request['response_format']['json_schema']['schema'] if 'response_format' in request else request['format'])['properties']
+            if current:
+                self.assertEqual(fields['action']['enum'],['needs_clarification'])
+                self.assertEqual(fields['items']['maxItems'],0)
+                self.assertEqual(fields['questions']['minItems'],1)
+            else:
+                self.assertIn('new_order',fields['action']['enum'])
+                self.assertGreater(fields['items']['maxItems'],0)
 
     def body(self, **changes):
         body = dict(customer_name='Test buyer', items=[dict(product_id='p_pandesal', quantity=3, unit='dozen')],
@@ -51,43 +345,24 @@ class Workflows(unittest.TestCase):
                     due_date=backend.today(), due_time='09:00', method='pickup', address='', notes='', questions=[],
                     evidence=[dict(message_id='m_demo_2', quote='3 dozen')])
 
-    def test_login_protects_bakery_data_and_logout_revokes_session(self):
+    def test_no_sign_in_but_cross_site_mutations_are_rejected(self):
         with TestClient(backend.app) as visitor:
-            self.assertEqual(visitor.get('/api/state').status_code, 401)
-            self.assertEqual(visitor.post('/api/orders', json=self.body()).status_code, 401)
-            visitor.cookies.set('bentabuddy_session', 'forged-cookie')
-            self.assertEqual(visitor.get('/api/state').status_code, 401)
-            visitor.cookies.clear()
-            bad = visitor.post('/api/auth/login', json=dict(email='owner@example.test', password='incorrect'))
-            self.assertEqual(bad.status_code, 401)
-            login = visitor.post('/api/auth/login', json=dict(email='OWNER@example.test', password='test-password-123'))
-            self.assertEqual(login.status_code, 200)
-            self.assertIn('HttpOnly', login.headers['set-cookie'])
-            self.assertIn('SameSite=strict', login.headers['set-cookie'])
             self.assertEqual(visitor.get('/api/state').status_code, 200)
-            token = visitor.cookies.get('bentabuddy_session')
-            self.assertEqual(visitor.post('/api/auth/logout', json={}).status_code, 200)
-            visitor.cookies.set('bentabuddy_session', token)
-            self.assertEqual(visitor.get('/api/state').status_code, 401)
-
-    def test_owner_password_is_hashed_and_setup_cannot_overwrite_account(self):
-        self.assertFalse(self.client.get('/api/auth/status').json()['needs_setup'])
-        with backend.connect() as db:
-            owner = db.execute('SELECT * FROM auth_owner').fetchone()
-            self.assertNotEqual(owner['password_hash'], 'test-password-123')
-            self.assertEqual(len(owner['salt']), 32)
-            self.assertEqual(len(owner['password_hash']), 64)
-        response = self.client.post('/api/auth/setup', json=dict(email='another@example.test', password='other-password-123', bakery_name='Another bakery'))
-        self.assertEqual(response.status_code, 409)
-        self.assertEqual(self.client.get('/api/auth/status').json()['user']['bakery_name'], 'Test bakery')
-
-    def test_cross_site_mutations_and_expired_sessions_are_rejected(self):
         self.assertEqual(self.client.post('/api/orders', json=self.body(), headers={'origin':'https://other.example'}).status_code, 403)
-        self.assertEqual(self.client.post('/api/auth/logout', content='').status_code, 403)
+        self.assertEqual(self.client.post('/api/orders', content=json.dumps(self.body()), headers={'content-type':'text/plain'}).status_code, 403)
+        self.assertEqual(self.client.get('/api/auth/status').status_code, 404)
+
+    def test_old_sign_in_tables_are_dropped_and_business_name_kept(self):
         with backend.connect() as db:
-            db.execute('UPDATE auth_sessions SET expires_at=0')
-        self.assertEqual(self.client.get('/api/state').status_code, 401)
-        self.assertIsNone(self.client.get('/api/auth/status').json()['user'])
+            db.execute("DELETE FROM settings WHERE key='business_profile'")
+            db.execute('CREATE TABLE auth_owner (id INTEGER PRIMARY KEY CHECK(id=1),email TEXT NOT NULL,bakery_name TEXT NOT NULL,salt TEXT NOT NULL,password_hash TEXT NOT NULL)')
+            db.execute("INSERT INTO auth_owner VALUES (1,'owner@example.test','Old bakery','00','00')")
+            db.execute('CREATE TABLE auth_sessions (token_hash TEXT PRIMARY KEY,expires_at INTEGER NOT NULL)')
+        backend.init_db()
+        with backend.connect() as db:
+            tables = {r['name'] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        self.assertFalse({'auth_owner', 'auth_sessions'} & tables)
+        self.assertEqual(self.client.get('/api/state').json()['business'], {'kind': 'bakery', 'name': 'Old bakery'})
 
     def test_dozen_converts_to_pieces_and_catalog_price(self):
         order = self.create()
@@ -187,6 +462,18 @@ class Workflows(unittest.TestCase):
             proposal['evidence'][0]['quote'] = 'invented quote'
             with self.assertRaises(ValueError):
                 backend.validate_proposal(db, proposal, conv)
+
+    def test_repeated_model_product_requires_quantity_review_without_doubling(self):
+        for quantity in (3, 7):
+            proposal=self.proposal()
+            first=dict(proposal['items'][0])
+            proposal['items'].append(dict(first,quantity=quantity))
+            with backend.connect() as db:
+                conv=backend.read_payload(db,'conversations','conv_demo')
+                result=backend.validate_proposal(db,proposal,conv)
+            self.assertEqual(result['action'],'needs_clarification')
+            self.assertEqual(result['items'],[first])
+            self.assertTrue(any('total quantity' in q for q in result['questions']))
 
     def test_ai_runs_locally_and_requires_approval(self):
         response = unittest.mock.Mock()
@@ -331,8 +618,6 @@ class Workflows(unittest.TestCase):
             updated_customer = next(c for c in state['customers'] if c['id'] == customer['id'])
             photo_url = updated_customer['profile_photo_url']
             self.assertEqual(self.client.get(photo_url).content, b'cached-image')
-            with TestClient(backend.app) as visitor:
-                self.assertEqual(visitor.get(photo_url).status_code, 401)
             with patch.object(backend, 'fetch_profile', return_value=dict(status='unavailable')):
                 backend.enrich_profile(customer['id'])
             self.assertEqual(self.client.get(photo_url).content, b'cached-image')
