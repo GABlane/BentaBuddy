@@ -198,6 +198,78 @@ class Workflows(unittest.TestCase):
         self.assertTrue(approved.json()['is_demo'])
         self.assertEqual(self.client.post('/api/orders', json=self.body(job_id=job['id'])).status_code, 409)
 
+    def approve_demo_request(self):
+        with patch.object(backend.WORKER, 'submit'):
+            job = self.client.post('/api/conversations/conv_demo/analyze', json={}).json()
+        with backend.connect() as db:
+            job.update(status='ready', proposal=self.proposal())
+            backend.write_payload(db, 'jobs', job)
+        order = self.client.post('/api/orders', json=self.body(job_id=job['id']))
+        self.assertEqual(order.status_code, 200, order.text)
+        return order.json()
+
+    def test_approved_messages_are_not_extracted_again_and_revision_uses_new_message(self):
+        order = self.approve_demo_request()
+        self.assertEqual(self.client.post('/api/conversations/conv_demo/analyze', json={}).status_code, 409)
+        conv = self.client.post('/api/conversations', json=dict(customer_name='Mika', conversation_id='conv_demo', text='Gawin na lang 4 dozen, same schedule.')).json()
+        with backend.connect() as db:
+            scoped, current = backend.extraction_scope(db, conv)
+            self.assertEqual([m['text'] for m in scoped['messages']], ['Gawin na lang 4 dozen, same schedule.'])
+            self.assertEqual(current['id'], order['id'])
+            self.assertEqual(current['items'][0]['base_quantity'], 36)
+
+    def test_completed_order_is_not_sent_as_context_for_next_purchase(self):
+        order = self.approve_demo_request()
+        self.advance(self.advance(self.advance(order, 'preparing'), 'ready'), 'fulfilled')
+        conv = self.client.post('/api/conversations', json=dict(customer_name='Mika', conversation_id='conv_demo', text='3 cookies bukas 10am pickup')).json()
+        with backend.connect() as db:
+            scoped, current = backend.extraction_scope(db, conv)
+            self.assertIsNone(current)
+            self.assertEqual(len(scoped['messages']), 1)
+            self.assertEqual(scoped['messages'][0]['text'], '3 cookies bukas 10am pickup')
+            proposal = self.proposal()
+            with self.assertRaisesRegex(ValueError, 'source message'):
+                backend.validate_proposal(db, proposal, scoped)
+
+    def test_legacy_approval_boundary_recovers_without_replaying_old_messages(self):
+        self.approve_demo_request()
+        with backend.connect() as db:
+            conv = backend.read_payload(db, 'conversations', 'conv_demo')
+            conv.pop('reviewed_message_count')
+            backend.write_payload(db, 'conversations', conv)
+            for job in backend.payloads(db, 'jobs'):
+                job.pop('message_count', None)
+                backend.write_payload(db, 'jobs', job)
+        conv = self.client.post('/api/conversations', json=dict(customer_name='Mika', conversation_id='conv_demo', text='11am na lang po.')).json()
+        with backend.connect() as db:
+            scoped, _ = backend.extraction_scope(db, conv)
+        self.assertEqual([m['text'] for m in scoped['messages']], ['11am na lang po.'])
+
+    def test_explicit_new_purchase_preserves_open_order_and_customer(self):
+        old = self.approve_demo_request()
+        conv = self.client.post('/api/conversations', json=dict(customer_name='Mika', conversation_id='conv_demo', text='Separate order po, 3 cookies bukas 10am pickup')).json()
+        with patch.object(backend.WORKER, 'submit'):
+            response = self.client.post('/api/conversations/conv_demo/start-order', json=dict(message_id=conv['messages'][-1]['id'], version=conv['version']))
+        self.assertEqual(response.status_code, 200, response.text)
+        job = response.json()
+        with backend.connect() as db:
+            fresh = backend.read_payload(db, 'conversations', conv['id'])
+            scoped, current = backend.extraction_scope(db, fresh)
+            self.assertIsNone(current)
+            self.assertEqual(len(scoped['messages']), 1)
+            proposal = self.proposal()
+            proposal.update(items=[dict(product_id='p_cookie', quantity=3, unit='piece')], evidence=[dict(message_id=conv['messages'][-1]['id'], quote='3 cookies')])
+            job.update(status='ready', proposal=proposal)
+            backend.write_payload(db, 'jobs', job)
+        saved = self.client.post('/api/orders', json=self.body(job_id=job['id'], items=proposal['items']))
+        self.assertEqual(saved.status_code, 200, saved.text)
+        self.assertNotEqual(saved.json()['id'], old['id'])
+        self.assertEqual(saved.json()['customer_id'], old['customer_id'])
+        with backend.connect() as db:
+            self.assertEqual(backend.enrich(backend.read_payload(db, 'orders', old['id'])), old)
+        stale = self.client.post('/api/conversations/conv_demo/start-order', json=dict(message_id=conv['messages'][-1]['id'], version=conv['version']))
+        self.assertEqual(stale.status_code, 409)
+
     def test_new_message_makes_proposal_stale(self):
         with patch.object(backend.WORKER, 'submit'):
             job = self.client.post('/api/conversations/conv_demo/analyze', json={}).json()
@@ -234,6 +306,29 @@ class Workflows(unittest.TestCase):
         state = self.client.get('/api/state').json()
         self.assertEqual(state['jobs'][0]['status'], 'failed')
         self.assertIn(order['id'], [o['id'] for o in state['orders']])
+
+    def test_profile_enrichment_preserves_orders_and_serves_cached_photo_privately(self):
+        order = self.create()
+        with backend.connect() as db:
+            customer = backend.read_payload(db, 'customers', order['customer_id'])
+            customer.update(source='facebook', facebook_sender_id='12345')
+            backend.write_payload(db, 'customers', customer)
+        with tempfile.TemporaryDirectory() as photo_dir, patch.object(backend, 'DATA', Path(photo_dir)), patch.object(backend, 'fetch_profile', return_value=dict(status='available', name='Juan Santos', photo=b'cached-image', mime='image/jpeg')):
+            backend.enrich_profile(customer['id'])
+            state = self.client.get('/api/state').json()
+            updated = next(o for o in state['orders'] if o['id'] == order['id'])
+            self.assertEqual(updated['customer_name'], 'Juan Santos')
+            self.assertEqual(updated['version'], order['version'])
+            self.assertEqual(updated['items'], order['items'])
+            updated_customer = next(c for c in state['customers'] if c['id'] == customer['id'])
+            photo_url = updated_customer['profile_photo_url']
+            self.assertEqual(self.client.get(photo_url).content, b'cached-image')
+            with TestClient(backend.app) as visitor:
+                self.assertEqual(visitor.get(photo_url).status_code, 401)
+            with patch.object(backend, 'fetch_profile', return_value=dict(status='unavailable')):
+                backend.enrich_profile(customer['id'])
+            self.assertEqual(self.client.get(photo_url).content, b'cached-image')
+            self.assertEqual(next(c for c in self.client.get('/api/state').json()['customers'] if c['id'] == customer['id'])['name'], 'Juan Santos')
 
     def test_signed_facebook_webhooks_are_deduplicated(self):
         payload = dict(object='page', entry=[dict(id='test_page', messaging=[dict(sender=dict(id='customer1'), message=dict(mid='message1', text='3 dozen pandesal bukas 9am pickup'))])])

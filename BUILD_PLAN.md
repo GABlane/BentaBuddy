@@ -6,7 +6,7 @@ Replace the earlier offline study concept with a responsive order-management web
 
 Product promise: turn messy customer conversations into reviewed orders, then help the owner know what to prepare, what to fulfill, and what customers buy most often.
 
-Status: first implementation completed: eight responsive modules, SQLite persistence, owner-reviewed local AI extraction, signed Facebook webhook receiver, and startup scripts. Frontend production build and 19 backend workflow tests pass. Qwen3 4B GGUF downloaded and SHA-256 verified. Three real local CPU inference cases now pass using the pinned Instruct model. Production HTTP and visual browser verification remain outstanding because this coding session cannot reach local ports and has no available browser. See docs/AI_VALIDATION.md. Facebook credentials and Page access remain unconfirmed. See README.md for reproduction and current limitations.
+Status: eight modules and local owner login implemented. Production build and 32 automated workflow/auth/parser/relay/profile tests pass. The owner confirmed real Facebook delivery, customer names/photos, Taglish quantity/time corrections, and offline operation. Request scoping now separates reviewed messages from new requests, with an explicit new-purchase boundary. Remaining gates: expanded Taglish accuracy checks, phone/browser verification, approved-order revision and complete fulfillment demo, current repository publication, and hackathon materials. See docs/AI_VALIDATION.md for model test scope.
 
 ## Event constraints
 
@@ -137,7 +137,7 @@ Repository must disclose exact model/runtime, APIs, frameworks, code/assets, Cod
 
 ## Pending inputs
 
-- Facebook Page admin access and Meta developer/app status (question already asked).
+- Facebook Page/app access and profile lookup confirmed by the owner; public customer access still depends on Meta approval.
 - Small bakery catalog, example prices/units, and pickup/delivery workflow.
 - Official team names, demo display, representative user feedback, and current time remaining.
 

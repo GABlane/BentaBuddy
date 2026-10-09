@@ -32,3 +32,12 @@ cd BentaBuddy
 This uses the real localhost HTTP transport and an isolated temporary database; it does not need the bakery password or modify real records. It exits with an error if a result is wrong. The optional `--cli /path/to/llama-completion` mode reproduces the one-shot CPU test above but does not exercise HTTP.
 
 Production HTTP extraction and visual browser behavior after the restart remain unverified in this session. Model inference on the three synthetic cases is verified.
+
+
+## Request-boundary regression — October 9, 2026
+
+The extractor previously sent the last 25 chat messages, which could replay previous purchases. It now sends only messages since approval (or an owner-selected new-purchase boundary). Active approved orders remain revision context; closed orders are excluded. Source evidence is validated against the scoped messages. With no unreviewed messages, extraction stops visibly rather than replaying an approved request. Full chat history and earlier orders remain stored.
+
+The extended `scripts/check-ai.py --cli .runtime/cli-check/llama-b11429/llama-completion` passed all four actual local CPU cases after this change. The existing corrected-order, revision, and inquiry checks passed again (18.03, 20.13, and 20.52 seconds including model load). A fourth case completed the pandesal order, appended “Pa-order naman 3 chocolate chip cookies bukas, pickup 10am.” to the same conversation, and produced only 3 cookies for October 10 at 10:00. Approval created a different order ID with the same customer; no old pandesal items were included. The fourth case was not individually timed. This remains a CLI transport check, not a production browser test.
+
+All 32 automated tests pass, including request boundaries, legacy approval recovery, closed-order isolation, separate purchases preserving open orders/customer identity, stale scope selection, and rejection of old-message evidence. The owner previously confirmed live Messenger delivery/profiles and offline operation; the updated request-boundary UI still needs their browser check after restart.

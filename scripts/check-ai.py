@@ -81,6 +81,25 @@ with tempfile.TemporaryDirectory(prefix='bentabuddy-real-ai-') as directory:
         inquiry, elapsed = extract('Magkano po cheese pandesal? Available po ba bukas?')
         assert inquiry['proposal']['action'] == 'inquiry', inquiry['proposal']
         print(f'PASS inquiry is not a purchase ({elapsed}s)', flush=True)
+        for action in ['preparing', 'ready', 'fulfilled']:
+            saved = backend.transition(saved['id'], backend.TransitionBody(action=action, version=saved['version']))
+        conversation = backend.import_message(backend.ImportBody(customer_name=order['customer_name'], conversation_id=revised['conversation_id'], text='Pa-order naman 3 chocolate chip cookies bukas, pickup 10am.'))
+        with backend.connect() as db:
+            conversation['messages'][-1]['created_at'] = '2026-10-09T20:30:00+08:00'
+            backend.write_payload(db, 'conversations', conversation)
+        with patch.object(backend.WORKER, 'submit'):
+            returning = backend.analyze(conversation['id'])
+        backend.run_job(returning['id'])
+        with backend.connect() as db:
+            returning = backend.read_payload(db, 'jobs', returning['id'])
+        assert returning['status'] == 'ready', returning
+        p = returning['proposal']
+        assert p['action'] == 'new_order', p
+        assert p['items'] == [dict(product_id='p_cookie', quantity=3, unit='piece')], p
+        assert (p['due_date'], p['due_time'], p['method']) == ('2026-10-10', '10:00', 'pickup'), p
+        new_order = backend.save_order(backend.OrderBody(customer_name=order['customer_name'], items=p['items'], due_date=p['due_date'], due_time=p['due_time'], method=p['method'], job_id=returning['id']))
+        assert new_order['id'] != saved['id'] and new_order['customer_id'] == saved['customer_id'], new_order
+        print('PASS returning customer: only 3 cookies, separate order; old pandesal excluded', flush=True)
         print('All real inference checks passed. Synthetic test database discarded.', flush=True)
 
     if args.cli:

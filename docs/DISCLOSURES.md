@@ -11,4 +11,10 @@
 - Demonstration records: synthetic catalog, customers, conversations, orders, and payments; not real sales or customer identities.
 - Local boundary: conversation interpretation, order validation, SQLite storage, dashboards, and reports run on the owner's Mac. Phone/browser renders the app. Model download, dependency installation, and live Facebook message receipt need internet. Meta processes Messenger messages as the external messaging provider; no claim that Messenger itself works offline.
 - Integration status: webhook code is implemented and tested with synthetic signed requests. Real Page permissions/subscription and live receipt remain unverified until configured by the team. No automatic customer replies.
-- Validation status: the 19 automated workflow/parser/auth tests use mocked model responses. Separately, three real local CPU Instruct-model generations passed through the application validation and approval code using a CLI transport substitute. See AI_VALIDATION.md for scope and actual timings. Running-server HTTP transport and browser behavior still require verification after restart.
+- Validation status: the 32 automated workflow/parser/auth/relay/profile tests use mocked model responses. Separately, three real local CPU Instruct-model generations passed through the application validation and approval code using a CLI transport substitute. See AI_VALIDATION.md for scope and actual timings. Running-server HTTP transport and browser behavior still require verification after restart.
+
+- Optional Facebook transport: Cloudflare Quick Tunnel via cloudflared, forwarding only the webhook relay. Cloudflare is a network transport provider, not an AI inference provider. The owner confirmed live tunnel operation, Meta delivery, and local extraction/correction through screenshots on October 9, 2026.
+
+Optional customer profiles: Meta User Profile API uses a backend-only Page token to fetch customer names/photos; bounded photos are cached locally. This is a Facebook data lookup, separate from local AI inference. Live Page profile permissions must be tested by the owner.
+
+The owner also confirmed live customer names/photos and offline operation. Request scoping now excludes reviewed messages and closed-order context; explicit selection separates new purchases while an earlier order remains open.
