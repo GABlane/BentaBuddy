@@ -31,3 +31,65 @@
 @media(max-width:760px){.order-confirmation{padding:21px 18px}.order-confirmation h3{font-size:25px}.confirmation-schedule{padding:13px;gap:10px;flex-wrap:wrap}.confirmation-schedule strong{font-size:11px}.confirmation-items>div{font-size:11px}.confirmation-items strong{font-size:11px}.order-confirmation .modal-actions{gap:9px}.order-confirmation .modal-actions .button{font-size:10px}.approved-summary strong{font-size:11px}.approved-summary p{font-size:10px}.approved-actions{width:100%;margin-left:30px;gap:12px}.approved-actions .button{font-size:9px}.preparation-dates{gap:7px;margin-top:12px}.preparation-dates>button{min-width:90px;padding:11px 13px}.preparation-dates>button>span{font-size:11px}.preparation-dates>button>small{font-size:9px}.preparation-summary{align-items:flex-start}.preparation-summary strong{font-size:12px}.preparation-summary span{font-size:9px}.preparation-summary>small{display:none}.preparation-focus{padding:11px 12px;font-size:10px}.line-quantity-summary{font-size:9px!important}.line-quantity-summary span{margin-left:2px}}
 
 .message-order-start{display:block;border:0;background:transparent;color:#55734e;font:inherit;font-size:10px;padding:5px 0;cursor:pointer;text-decoration:underline;text-underline-offset:3px}.message-order-start:disabled{opacity:.5;cursor:wait}.extraction-scope-note{font-size:11px;color:#71806b;line-height:1.6;margin:0 0 18px}
+
+/* Inbox: keep the source conversation beside the review decision. */
+.inbox-layout{grid-template-columns:230px minmax(0,1fr);gap:18px}
+.conversation-main{min-width:0;overflow:hidden}
+.conversation-workspace{display:grid;grid-template-columns:minmax(0,1fr) minmax(290px,.95fr);align-items:stretch}
+.inbox-pane-tabs{display:none}
+.messages-pane{min-width:0;background:#fbfcf8;border-right:1px solid var(--line)}
+.inbox-pane-heading{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:17px 20px;border-bottom:1px solid var(--line);color:#365540}
+.inbox-pane-heading>span{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700}
+.inbox-pane-heading small{font-size:9px;color:#7e8b76;text-align:right}
+.messages-pane .message-stream{border-bottom:0;min-height:420px;height:clamp(420px,64dvh,680px);max-height:none;padding:22px 20px;overscroll-behavior:contain}
+.messages-pane .message{max-width:100%;margin-bottom:22px}
+.messages-pane .message-text{overflow-wrap:anywhere}
+.message-order-start{min-height:32px;font-size:10px;color:#486642}
+.conversation-workspace .extraction-area{min-width:0;padding:0 20px 22px;max-height:calc(clamp(420px,64dvh,680px) + 55px);overflow-y:auto;overscroll-behavior:contain}
+.extraction-area>.inbox-pane-heading{margin:0 -20px 18px}
+.conversation-workspace .extraction-scope-note{font-size:10px;line-height:1.7;background:#f5f7f0;padding:10px 12px;border-radius:8px;margin-bottom:18px}
+.conversation-workspace .extraction-heading{gap:10px;align-items:flex-start}
+.conversation-workspace .extraction-heading>div{min-width:0}
+.conversation-workspace .extraction-heading p{overflow-wrap:anywhere;line-height:1.6}
+.conversation-workspace .extraction-heading>.button{flex-basis:100%;margin:4px 0 0;min-height:40px;justify-content:center}
+.conversation-workspace .proposal-card{padding:16px}
+.conversation-workspace .proposal-title{align-items:flex-start;gap:8px;flex-wrap:wrap;line-height:1.5}
+.conversation-workspace .proposal-meta{gap:12px;flex-wrap:wrap}
+.conversation-workspace .proposal-actions{flex-wrap:wrap}
+.conversation-workspace .proposal-actions>.button{flex:1;justify-content:center;white-space:normal;min-height:42px}
+.conversation-workspace .approved-summary{flex-wrap:wrap;align-items:flex-start;gap:10px}
+.conversation-workspace .approved-summary>div{min-width:0}
+.conversation-workspace .approved-actions{width:100%;flex-wrap:wrap;margin-left:0;justify-content:flex-start}
+.inbox-review-empty{text-align:center;padding:35px 12px;color:#6e7e65}
+.inbox-review-empty>span{width:58px;height:58px;background:#eff3e8;border-radius:18px;display:inline-flex;align-items:center;justify-content:center;color:#6a8555;margin-bottom:18px}
+.inbox-review-empty h3{font-family:Georgia,serif;font-size:20px;font-weight:500;color:#31543e;margin-bottom:10px}
+.inbox-review-empty p{font-size:12px;line-height:1.8;max-width:290px;margin:0 auto}
+@media(max-width:1199px){
+ .inbox-layout{grid-template-columns:minmax(0,1fr)}
+ .conversation-list{display:flex;overflow-x:auto;max-width:100%;overscroll-behavior-x:contain}
+ .conversation-list>.panel-heading{display:none}
+ .conversation-list .conversation-preview{width:230px;min-width:230px;border-bottom:0;border-right:1px solid var(--line)}
+}
+@media(max-width:760px){
+ .inbox-layout{gap:14px}
+ .conversation-workspace{display:block}
+ .inbox-pane-tabs{display:flex;padding:6px;margin:12px 14px;background:#f0f3eb;border-radius:11px;gap:5px}
+ .inbox-pane-tabs button{display:flex;align-items:center;justify-content:center;gap:7px;flex:1;min-height:44px;border:0;border-radius:8px;background:transparent;color:#6c7c63;font:inherit;font-size:12px;cursor:pointer}
+ .inbox-pane-tabs button.active{background:#fff;color:#2e523c;box-shadow:0 2px 6px #1c3c2510;font-weight:700}
+ .inbox-pane-tabs button>span{font-size:9px;background:#eaf0e1;padding:2px 6px;border-radius:6px}
+ .inbox-pane-tabs .review-indicator{color:#3f6742}
+ .conversation-workspace.showing-messages>.extraction-area,.conversation-workspace.showing-review>.messages-pane{display:none}
+ .messages-pane{border-right:0}
+ .messages-pane>.inbox-pane-heading{display:none}
+ .messages-pane .message-stream{height:auto;min-height:280px;max-height:62dvh;padding:20px 17px}
+ .conversation-workspace .extraction-area{max-height:none;overflow:visible;padding:8px 17px 22px}
+ .extraction-area>.inbox-pane-heading{display:none}
+ .conversation-heading .customer-cell{min-width:0}
+ .conversation-heading h2{overflow-wrap:anywhere}
+ .conversation-heading>.button{flex-shrink:0;min-height:40px}
+ .message-order-start{min-height:44px;font-size:11px}
+ .conversation-workspace .extraction-scope-note{font-size:11px}
+ .conversation-workspace .extraction-heading h3{font-size:13px}
+ .conversation-workspace .extraction-heading>.button{min-height:44px;font-size:12px}
+ .conversation-workspace .proposal-actions>.button{min-height:44px;font-size:12px}
+}

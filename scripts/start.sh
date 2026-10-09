@@ -6,7 +6,9 @@ if [[ ! -x .venv/bin/python || ! -f dist/index.html ]]; then
   exit 1
 fi
 # Optional local secrets. Never expose these through Vite or commit .env.
+startup_host="${BENTABUDDY_HOST:-}"
 if [[ -f .env ]]; then set -a; source .env; set +a; fi
+startup_host="${startup_host:-${BENTABUDDY_HOST:-127.0.0.1}}"
 mkdir -p data
 ai_pid=''
 cleanup() { if [[ -n "$ai_pid" ]]; then kill "$ai_pid" 2>/dev/null || true; fi; }
@@ -24,5 +26,8 @@ if [[ "$probe_status" != 0 ]]; then
   echo 'Loading the local model. Log: data/local-ai.log'
 fi
 echo 'BentaBuddy: http://127.0.0.1:8000'
+if [[ "$startup_host" == '0.0.0.0' ]]; then
+  .venv/bin/python -B scripts/phone-address.py
+fi
 echo 'Keep this Terminal open. Press Ctrl+C to stop.'
-PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m uvicorn backend.app:app --host "${BENTABUDDY_HOST:-127.0.0.1}" --port 8000
+PYTHONDONTWRITEBYTECODE=1 .venv/bin/python -m uvicorn backend.app:app --host "$startup_host" --port 8000

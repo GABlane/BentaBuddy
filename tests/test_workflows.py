@@ -107,6 +107,14 @@ class Workflows(unittest.TestCase):
     def test_delivery_requires_address(self):
         self.assertEqual(self.client.post('/api/orders', json=self.body(method='delivery')).status_code, 400)
 
+    def test_deleting_demo_orders_does_not_reuse_a_live_order_number(self):
+        first = self.create()
+        second = self.create()
+        with backend.connect() as db:
+            db.execute('DELETE FROM orders WHERE id=?', (first['id'],))
+        third = self.create()
+        self.assertEqual(int(third['number'][3:]), int(second['number'][3:]) + 1)
+
     def test_revision_keeps_order_id_and_requeues_changed_food(self):
         order = self.advance(self.advance(self.create(), 'preparing'), 'ready')
         revised = self.client.put('/api/orders/' + order['id'], json=self.body(version=order['version'], items=[dict(product_id='p_pandesal', quantity=4, unit='dozen')]))

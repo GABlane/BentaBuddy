@@ -476,7 +476,8 @@ def save_order(body, order_id=None):
         else:
             customer = dict(id=uid('c'), name=body.customer_name.strip(), source='manual', contact='', is_demo=body.is_demo, created_at=now())
             write_payload(db, 'customers', customer)
-        order = dict(old) if old else dict(id=uid('o'), number='BB-' + str(1001 + len(payloads(db, 'orders'))), created_at=now(), payments=[], fulfillment='queued', fulfilled_at=None, is_demo=bool(conv.get('is_demo') if conv else customer['is_demo']))
+        numbers = [int(o['number'][3:]) for o in payloads(db, 'orders') if o.get('number', '').startswith('BB-') and o['number'][3:].isdigit()]
+        order = dict(old) if old else dict(id=uid('o'), number='BB-' + str(max(numbers or [1000]) + 1), created_at=now(), payments=[], fulfillment='queued', fulfilled_at=None, is_demo=bool(conv.get('is_demo') if conv else customer['is_demo']))
         if items_changed:
             order['fulfillment'] = 'queued'
         order.update(customer_id=customer['id'], customer_name=customer['name'], items=items, due_date=body.due_date, due_time=body.due_time,

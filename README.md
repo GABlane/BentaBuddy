@@ -29,10 +29,10 @@ Setup needs internet to install dependencies and download the model. Subsequent 
 The Mac mini hosts both the app and AI. The phone is a browser client; it does not run the model. Connect both to the same trusted Wi-Fi or local hotspot and start explicitly with:
 
 ```bash
-BENTABUDDY_HOST=0.0.0.0 ./scripts/start.sh
+./scripts/start-phone.sh
 ```
 
-Find the Mac's Wi-Fi IP in System Settings → Wi-Fi → Details, then open `http://MAC_IP:8000` on the phone. A local network is required; an internet connection is not. macOS may ask to allow incoming connections. The dashboard and management API require the local owner login. The LAN demo uses HTTP, so use a trusted network and fictional data; do not use it as a public production deployment. Keep the AI port 11434 on loopback. Do not expose the full dashboard/API publicly.
+Stop any existing BentaBuddy app process first (Ctrl+C in its Terminal), then run this command. It prints active local network URLs; open the matching `http://MAC_IP:8000` address on the phone and sign in with your existing bakery owner account. Leave the Facebook tunnel running. The address can change when switching networks. You can also find the Mac's Wi-Fi IP in System Settings → Wi-Fi → Details. A local network is required; an internet connection is not. macOS may ask to allow incoming connections. The dashboard and management API require the local owner login. The LAN demo uses HTTP, so use a trusted network and fictional data; do not use it as a public production deployment. Keep the AI port 11434 on loopback. Do not expose the full dashboard/API publicly.
 
 ### Optional Ollama runtime
 
@@ -108,3 +108,6 @@ Team live validation: the owner confirmed Meta webhook verification, receipt of 
 Extraction uses messages since the last approval and the active approved order as context for revisions. Completed/canceled order items are excluded. If no new messages exist, extraction stops instead of proposing an old order again. The full conversation remains visible.
 
 For a separate purchase while a previous order is still open (or to separate multiple unapproved requests), click **Start new order here** beneath the first message of the new purchase. Confirm the change, then review the new proposal. The chosen message and later messages form the request; earlier confirmed orders remain saved and customer history is preserved. This replaces pending drafts and rejects stale approvals. Existing saved conversations recover their last approved boundary from approval jobs where available.
+
+
+Phone connection troubleshooting: enter `http://` explicitly, use port `8000`, and ensure the app was started with `scripts/start-phone.sh`. If prompted by macOS, allow incoming connections for the local Python app. Guest/venue Wi-Fi may isolate devices; use a trusted shared network or hotspot that permits device-to-device access. The Cloudflare URL forwards only Facebook webhooks and cannot open the dashboard. For an offline phone demonstration, keep local Wi-Fi connected while disconnecting upstream internet. Starting normally with `./scripts/start.sh` returns to loopback access unless `.env` explicitly sets another host. An explicit `BENTABUDDY_HOST` command override takes precedence over `.env`.
