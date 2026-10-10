@@ -114,13 +114,23 @@ Skip this section if you are demonstrating manual imports. You need a Page you m
 6. Keep both Terminals open. Send a new fictional order from an eligible personal account to the Page. Open Inbox and verify receipt, extraction, review, and approval. Messages sent as the Page are ignored echoes. Historical messages are not imported.
 7. For permitted customer names/photos, run `.venv/bin/python -B scripts/configure-facebook-profile.py`, enter a fresh Page access token privately, restart the app, then send a new message or choose **Refresh customer profiles** in Settings.
 
-Restarting the Quick Tunnel can change its URL; update and verify the Meta callback again when that happens. See [FACEBOOK_SETUP.md](FACEBOOK_SETUP.md) for details. Only the webhook route is public through this relay; the app does not send automatic customer replies.
+Restarting the Quick Tunnel can change its URL; update and verify the Meta callback again when that happens. See [FACEBOOK_SETUP.md](FACEBOOK_SETUP.md) for details. Only the webhook route is public through this relay; customer replies and status notifications are optional and off by default. To enable them, follow [auto-reply setup](FACEBOOK_AUTO_REPLY.md).
+
+### Enable customer replies and workflow notifications
+
+1. Save the Page access token using the profile helper above, restart BentaBuddy, and refresh the browser. Confirm the local model is ready.
+2. Open **Settings → Facebook replies & status updates**. In **Try a local reply without sending**, choose a conversation with a saved order, enter `Ano na po status ng BB-1001?` with that customer's actual order number, and click **Preview local AI reply**. No message is sent; this preview also works offline.
+3. Turn on **Enable replies to new Page messages**, then **Use local AI for customer status questions**. Turn on **Notify customers when I approve or update an order / booking** if you want workflow notifications too.
+4. While online, send a fresh status question from an eligible account. Check Messenger and **Recent replies**. Advance the order in kitchen/dispatch or update the booking state and check the notification.
+5. Check that a pending booking is described as unconfirmed and an unclear order reference asks for clarification. New orders and change requests still require owner review. These are saved-record status replies; staff must update progress in the app.
+
+Sending needs internet and an eligible incoming text within the app's 24-hour response window. Local AI selects the reply/order; code supplies the saved facts. Receipt-only mode has a 15-minute cooldown; AI mode coalesces unfinished follow-ups and has a five-second send cooldown. Failed or uncertain sends are not replayed automatically. **Accepted by Meta** indicates an API message ID, not proof of reading. See [reply behavior and troubleshooting](FACEBOOK_AUTO_REPLY.md).
 
 ## 9. Demonstrate offline operation
 
 Finish setup and confirm model readiness while online. Keep the Mac/app running, then disconnect **upstream internet** while retaining the local network if using a phone. On the Mac alone, you can use the loopback URL without Wi-Fi.
 
-Paste a fresh fictional request, run extraction, review/approve, and show the saved order/work board. Customer history and analytics remain local. New Facebook messages, profile lookups, and the tunnel need internet and will not keep working offline. Record the real inference; label any cuts or time compression.
+Paste a fresh fictional request, run extraction, review/approve, and show the saved order/work board. Customer history and analytics remain local. You can also preview a local-AI status reply in Settings without sending it. New Facebook messages, outbound replies/notifications, profile lookups, and the tunnel need internet and will not keep working offline. Record the real inference; label any cuts or time compression. Offline workflow changes do not schedule a guaranteed later delivery to Messenger.
 
 ## 10. Run project checks
 
@@ -139,6 +149,14 @@ With the local model ready, test actual inference in isolated temporary database
 ```
 
 Run the inference scripts sequentially. Automated workflow tests mock AI responses; these two scripts call the actual local model. They do not alter saved customer records. See [AI_VALIDATION.md](AI_VALIDATION.md) for CLI alternatives and validation scope. A fresh installation and live browser flow still need verification on the target machine.
+
+For six real status-reply selection checks with fictional orders, supply your local llama.cpp `llama-completion` executable:
+
+```bash
+.venv/bin/python -B scripts/check-customer-replies.py --cli /path/to/llama-completion
+```
+
+This script does not call Meta or the live database. It checks the production reply-selection prompt/schema, not live Messenger sending. The app setup downloads `llama-server`; obtain a compatible `llama-completion` separately for this optional CLI check. Run model checks sequentially.
 
 ## Restarting, updates, and backups
 

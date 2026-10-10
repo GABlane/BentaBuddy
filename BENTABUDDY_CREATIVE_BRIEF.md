@@ -44,6 +44,7 @@ A gadget seller faces model/color and dispatch details. A staycation host needs 
 5. The owner reviews, edits, and approves. AI does not independently confirm a sale or booking.
 6. The approved request becomes an order or reservation in the appropriate workflow.
 7. The owner tracks fulfillment, manually records received payments, and views customer/order analytics.
+8. With optional replies enabled, local AI matches status questions to that customer's saved orders. The backend supplies the recorded kitchen, dispatch, or booking status. Owner workflow updates can also notify the customer through Messenger while online.
 
 Think of it as an **operations assistant for a Facebook Page**, rather than a replacement for every Facebook Page management feature.
 
@@ -63,8 +64,8 @@ Switching business themes changes the visual style, catalog, and relevant workfl
 - The current prototype runs its web app, database, and AI on a Mac mini.
 - A phone can open the responsive website over the same local Wi-Fi or hotspot. The phone is a browser client; the AI runs on the Mac.
 - Qwen3 4B Instruct runs locally through llama.cpp. The app uses a pretrained model; do not describe it as a model trained from scratch by the team.
-- Saved messages, manual imports, AI extraction, orders, and analytics can work without internet once the app and model are installed.
-- Facebook message delivery requires internet. New Messenger messages do not arrive while disconnected.
+- Saved messages, manual imports, AI extraction, status-reply preview, orders, and analytics can work without internet once the app and model are installed.
+- Facebook message delivery requires internet. New Messenger messages and outbound replies/notifications do not work while disconnected.
 - Local inference avoids sending the conversation to an additional cloud AI provider. Facebook and the connection tunnel still transport Page messages when online.
 
 ## What the prototype includes
@@ -76,12 +77,13 @@ Switching business themes changes the visual style, catalog, and relevant workfl
 - Manual payment recording; a customer's claim of payment is not verification.
 - Staycation reservation dates, guest counts, calculated nights, and server-side overlap checks when confirming or editing bookings.
 - Pending booking requests do not block dates. Each accommodation catalog entry represents one bookable unit; separate rooms need separate entries.
+- Optional local-AI status replies and owner-triggered kitchen/dispatch/booking notifications, off by default. The AI selects a bounded reply; code writes the saved status. Preview works offline without sending.
 
 ## Boundaries to respect in the logo/video
 
 Do not show unsupported features as finished:
 
-- Automatic customer replies, post publishing, ad management, or comment moderation.
+- Unrestricted generated chat, automatic order/booking confirmation, post publishing, ad management, or comment moderation. Optional local-AI status replies select grounded responses from the customer’s own records; owner-triggered kitchen/dispatch/booking notifications and fixed receipts are also implemented, off by default. Outbound delivery still needs live Page verification.
 - Automatic payment verification, payment collection, or courier integration.
 - Gadget inventory tracking or automatic stock verification.
 - Accommodation capacity pools or automatic guest-limit enforcement.
@@ -151,6 +153,12 @@ Use actual screen recordings for product behavior. Generated clips may support t
 | 55–60s | Logo over a clean dashboard/end card. | “BentaBuddy” / “Usap to order. Less hassle, ka-negosyo.” | End with a memorable product promise. |
 
 If inference takes longer than its allocated video segment, trim or speed up the recording and label it **“Processing shortened”**. Do not imply the edited clip measures real-time latency. A backup recording is useful, but present it as recorded footage if used during a live demo.
+
+### Optional status-reply segment
+
+For a longer demo, show the customer asking “Luto na po yung BB-1001?” using the saved order's actual number. Show the local AI selecting the recorded kitchen status. Then change the order to ready/dispatch and show the resulting notification. A staycation version can show that a pending booking is explicitly unconfirmed before the owner confirms it. Do not show an invented ETA, automatic booking approval, or kitchen/courier sensing.
+
+Use **Settings → Facebook replies & status updates → Try a local reply without sending** for a local-only preview. Label it as preview. Only show a received Messenger reply as working live delivery after verifying it with the configured Page and an eligible account. Sending needs internet; offline footage can demonstrate preview but not live Facebook transport. Setup: [Facebook replies](docs/FACEBOOK_AUTO_REPLY.md).
 
 ### Suggested Taglish voiceover
 

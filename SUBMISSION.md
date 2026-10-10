@@ -24,8 +24,10 @@ BentaBuddy is designed to reduce that repeated translation and make the next tas
 - **Alias:** `qwen3:4b-instruct-2507-q4_K_M`.
 - **Runtime:** llama.cpp on the owner's computer; optional Ollama support.
 - **Our work:** task-specific prompts, catalog/message context, schema-constrained JSON, validation, and owner-reviewed workflows. No training or fine-tuning claimed.
-- **AI responsibilities:** interpret Filipino/Taglish requests, apply corrections, extract offerings/quantities/schedules/details, distinguish inquiries and changes, suggest booking details, and ask about missing information.
-- **Code responsibilities:** prices, unit conversions, nightly totals, booking-overlap checks, persistence, workflow transitions, and analytics.
+- **AI responsibilities:** interpret Filipino/Taglish requests, apply corrections, extract offerings/quantities/schedules/details, distinguish inquiries and changes, suggest booking details, ask about missing information, and select grounded replies to customer status questions.
+- **Code responsibilities:** prices, unit conversions, nightly totals, booking-overlap checks, persistence, workflow transitions, analytics, factual status wording, and notification delivery.
+
+Optional Messenger replies are off by default. Local Qwen matches customer status questions to their own saved orders and selects a bounded reply; the backend supplies the actual kitchen, dispatch, or booking wording. Owner approval/status changes can also trigger notifications directly from saved records. Fixed receipt mode remains available. No automatic approval, invented ETA, or availability promise. Live outbound delivery still needs verification with the configured Page.
 
 The owner reviews every proposal. The AI does not verify payments or independently confirm room availability. There is no OpenAI/Google/cloud AI inference call or cloud fallback. Codex assisted development, which is disclosed separately.
 
@@ -38,7 +40,7 @@ The owner reviews every proposal. The AI does not verify payments or independent
 | Backend | Python, FastAPI, Pydantic, Uvicorn, HTTPX |
 | Database | Local SQLite |
 | Inference | Qwen3 4B Instruct GGUF through llama.cpp; optional Ollama |
-| Messaging | Meta Messenger webhooks and optional customer profile lookup |
+| Messaging | Meta Messenger webhooks, Send API for optional replies/notifications, and optional customer profile lookup |
 | Webhook connection | cloudflared / Cloudflare Quick Tunnel to a webhook-only relay |
 | Validation | unittest, FastAPI TestClient, actual-model smoke scripts, TypeScript/Vite build |
 
@@ -57,11 +59,13 @@ Example: “2 dozen cheese pandesal bukas, pickup 8am” followed by “gawin na
 
 A staycation example can show a studio booking for November 20–22 and two guests: two nights, initially pending. Backend overlap validation runs when the owner confirms. Each accommodation entry represents one bookable unit.
 
+Optional reply segment: select the same customer's conversation in **Settings → Facebook replies & status updates**, preview “Luto na po yung BB-1001?” using its actual order number, and show the response based on the saved kitchen state. For a live Messenger segment, enable the reply modes, send a fresh question from an eligible account, and update the order's workflow state to demonstrate a notification. Record successful live behavior before including it as a working feature. Local preview alone does not demonstrate Messenger sending.
+
 ## Offline boundary
 
-**Works offline after setup:** saved conversations, manual text imports, local model inference, draft review, orders/bookings, work boards, manually recorded payments, customer history, and analytics.
+**Works offline after setup:** saved conversations, manual text imports, local model inference, customer reply preview, draft review, orders/bookings, work boards, manually recorded payments, customer history, and analytics.
 
-**Needs internet:** initial downloads, new Facebook messages, fresh Meta profile lookups, and the public tunnel. Facebook does not work offline. Phone access still requires a local connection to the running Mac. Cloudflare transports messages; it does not run AI. Privacy means avoiding an additional cloud AI provider, not that Messenger messages never enter the cloud.
+**Needs internet:** initial downloads, new Facebook messages, outbound replies/status notifications, fresh Meta profile lookups, and the public tunnel. Facebook does not work offline. Phone access still requires a local connection to the running Mac. Cloudflare transports messages; it does not run AI. Privacy means avoiding an additional cloud AI provider, not that Messenger messages never enter the cloud.
 
 ## About-one-minute narration
 
@@ -81,9 +85,15 @@ Time the narration against your recording and trim as needed. Label fictional re
 
 ## Validation and scope
 
-At the October 10 documentation update, **52 automated tests and the production build pass**. Separate real model checks passed core order scenarios and all four business themes using temporary databases and CPU CLI inference. They do not establish general accuracy or verify production HTTP/browser behavior. The owner separately confirmed live Messenger receipt, profiles, corrections, and offline operation during development. See [AI validation](docs/AI_VALIDATION.md).
+At the October 10 documentation update, **87 automated tests and the production build pass**. Separate real model checks passed core order scenarios and all four business themes using temporary databases and CPU CLI inference. They do not establish general accuracy or verify production HTTP/browser behavior. The owner separately confirmed live Messenger receipt, profiles, corrections, and offline operation during development. See [AI validation](docs/AI_VALIDATION.md).
 
-Public-customer Facebook access remains dependent on Meta permissions and approval. An eligible-account demo does not establish public access. The app currently has no sign-in and is a single-owner local prototype. Automatic replies, social posting, payment verification, stock tracking/forecasting, and courier integration are outside scope.
+Six additional real local-model checks passed for kitchen, dispatch, pending booking, ambiguous orders, a new purchase, and an unknown order number. Outbound Send API requests are mocked in automated tests; live reply delivery remains to be verified after restart.
+
+## Technical disclosure for the submission form
+
+> Built with React 19, TypeScript, Vite, CSS, Lucide icons, a locally bundled Archivo font, Python/FastAPI, Pydantic, Uvicorn, HTTPX, and local SQLite. AI uses pretrained Qwen3-4B-Instruct-2507 Q4_K_M GGUF running locally through llama.cpp, with optional Ollama support. We implemented task-specific prompts, schema-constrained extraction and reply selection, validation, and owner-reviewed order/booking workflows; no model training or fine-tuning. Local AI matches status questions to the customer's own records; code supplies factual status wording and workflow notifications. Meta Messenger webhooks, Send API, and optional User Profile API provide messaging/profile integration; Cloudflare Tunnel transports webhooks. Neither runs our AI. OpenAI Codex assisted planning, code, styling, documentation, and tests; the product uses no cloud AI inference API. Starter catalogs and optional sample records are synthetic. The team supplied the logo; an earlier AI-generated login image remains in the repository but is no longer displayed. See repository disclosures for model/runtime sources, assets, licenses, and validation limits.
+
+Public-customer Facebook access remains dependent on Meta permissions and approval. An eligible-account demo does not establish public access. The app currently has no sign-in and is a single-owner local prototype. Unrestricted AI chat, social posting, payment verification, stock tracking/forecasting, and courier integration are outside scope.
 
 ## Submission references
 

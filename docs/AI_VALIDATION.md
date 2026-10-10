@@ -65,3 +65,13 @@ The core CPU CLI run passed five cases: corrected new order (20.32 seconds), rev
 The subsequent theme checks exposed two additional issues: a repeated gadget line and a service location omitted from notes despite appearing in the address field. Repeated product IDs now retain one suggested line and require explicit quantity clarification rather than adding the duplicate to the total. The prompt specifies one line per product and requires service locations in notes. Theme smoke assertions now check exact line count and quantity as well as product identity.
 
 The final sequential four-theme CPU CLI run passed the stronger assertions: bakery 2 dozen pandesal with gift-box notes, gadgets exactly 2 USB-C cables with black-color notes, staycation exactly 2 nights for November 20–22 with 2 guests and pending status, and general service exactly 1 service with `service location: customer office` in notes. None of these checks verifies browser behavior or HTTP transport.
+
+## Optional receipt acknowledgments — October 10, 2026
+
+At the receipt-only implementation checkpoint, 73 automated tests and the frontend production build passed. Added tests exercised the outbound Send API integration with mocked HTTP, including the off-by-default toggle, timestamp window, cooldown, duplicate/echo handling, concurrent send claims, disabled/changed settings, and failure/restart behavior without automatic replay. Those acknowledgments used a fixed receipt template, not the AI model; no additional model inference was needed at that checkpoint. No live outbound messages were sent by these tests. The expanded reply feature and current validation are recorded below. See [auto-reply setup](FACEBOOK_AUTO_REPLY.md).
+
+## Grounded customer status replies — October 10, 2026
+
+The expanded suite passes **87 tests** and the frontend production build. Local Qwen now selects a bounded reply/order for customer status questions; the backend supplies authoritative saved status wording. Owner-triggered notifications are deterministic. Tests cover customer isolation, preview without sends, latest-state checking, follow-up replacement, fallback, booking progression, and send eligibility. They use isolated temporary databases and mocked outbound HTTP, never real customer messages.
+
+`scripts/check-customer-replies.py` passed six real Qwen3-4B-Instruct-2507 GGUF CPU CLI cases: kitchen status, dispatched gadget status, pending booking, ambiguous orders, new purchase, and unknown order number. This checks local model selection using the production prompt/schema and fictional records; it does not test the running HTTP server, browser, or live Meta delivery. Follow [reply setup](FACEBOOK_AUTO_REPLY.md) for live verification after restarting.

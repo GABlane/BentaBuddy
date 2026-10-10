@@ -22,6 +22,7 @@ BentaBuddy is designed to reduce repeated copying, missed corrections, and scatt
 4. The owner edits and approves before an order or booking affects the workflow.
 5. Track preparation, dispatch, guest arrival, or service progress; record payments separately.
 6. View customer history, popular offerings, recorded payments, and fulfilled order value.
+7. Optionally answer customer status questions using local AI and notify customers when the owner updates kitchen, dispatch, or booking progress.
 
 Example: “2 dozen cheese pandesal bukas, pickup 8am” followed by “gawin na lang 3 dozen, 9am” should become a draft for **36 pieces at 9am tomorrow**, relative to the message timestamp. The owner checks the actual result before approval.
 
@@ -33,9 +34,9 @@ Example: “2 dozen cheese pandesal bukas, pickup 8am” followed by “gawin na
 | UI | CSS, Lucide icons, locally bundled Archivo font | Business themes and interface |
 | Backend | Python, FastAPI, Pydantic, Uvicorn | API, validation, workflows, frontend serving |
 | Storage | SQLite | Local catalogs, conversations, customers, jobs, orders, payments, events |
-| AI | Qwen3-4B-Instruct-2507, Q4_K_M GGUF | Language interpretation and structured drafts |
+| AI | Qwen3-4B-Instruct-2507, Q4_K_M GGUF | Language interpretation, structured drafts, and grounded status-reply selection |
 | Inference runtime | llama.cpp; optional Ollama | Model execution on the owner's computer |
-| Messaging | Meta Messenger webhooks, optional User Profile API, HTTPX | New Page text messages and permitted names/photos |
+| Messaging | Meta Messenger webhooks, Send API, optional User Profile API, HTTPX | Incoming text, optional replies/notifications, and permitted names/photos |
 | Webhook transport | cloudflared / Cloudflare Quick Tunnel | HTTPS to a webhook-only local relay |
 | Validation | Python unittest, FastAPI TestClient, model smoke scripts, TypeScript/Vite build | Workflow and inference checks |
 
@@ -69,9 +70,9 @@ Staycation bookings include check-in/out, guests, and calculated nights. Each ac
 | Operation | Connectivity |
 | --- | --- |
 | Initial dependency/model download | Internet required |
-| New Facebook messages, fresh profile lookups, public tunnel | Internet required |
+| New Facebook messages, outbound replies/notifications, fresh profile lookups, public tunnel | Internet required |
 | Saved messages and manual text imports | Offline |
-| Local extraction, review, orders/bookings, work boards, payments, analytics | Offline after setup |
+| Local extraction, reply preview, review, orders/bookings, work boards, payments, analytics | Offline after setup |
 | Phone browser access | Local connection to the running Mac; internet not required |
 
 Meta already processes Messenger conversations, and Cloudflare transports webhook traffic online. The privacy benefit is **no additional cloud AI inference**, not that messages never enter the cloud. New Messenger messages do not arrive offline. Historical inbox retrieval is not implemented.
@@ -115,9 +116,17 @@ Do not run both runtimes on port 11434. Use the pinned Instruct variant; the gen
 
 Follow [Facebook setup](docs/FACEBOOK_SETUP.md) with your own authorized Page/app, permissions, secrets, and webhook subscription. The owner confirmed live receipt, profile display, corrections, and offline operation during development. Public-customer access remains dependent on Meta permissions and approval; eligible-account testing does not establish public access.
 
-In a second Terminal, run `./scripts/start-facebook.sh`. Use the printed temporary HTTPS address plus `/api/facebook/webhook` as the Meta callback. Restarting the Quick Tunnel can change that address. Keep both app and tunnel running for live receipt. Only the webhook route is forwarded; the dashboard and model stay outside the public relay. The receiver verifies signatures, filters the configured Page, ignores echoes, deduplicates messages, stores text, and queues local inference. It sends no automatic replies.
+In a second Terminal, run `./scripts/start-facebook.sh`. Use the printed temporary HTTPS address plus `/api/facebook/webhook` as the Meta callback. Restarting the Quick Tunnel can change that address. Keep both app and tunnel running for live receipt. Only the webhook route is forwarded; the dashboard and model stay outside the public relay. The receiver verifies signatures, filters the configured Page, ignores echoes, deduplicates messages, stores text, and queues local inference. Optional local-AI status replies, fixed receipts, and owner-triggered status notifications are available in Settings; see [auto-reply setup](docs/FACEBOOK_AUTO_REPLY.md).
 
 Extraction uses messages since the last approval and the active order as revision context. Closed orders are excluded. For a separate purchase while an order is open, select **Start new order here** on its first message; earlier orders and customer history stay saved.
+
+### Customer replies and workflow notifications
+
+Open **Settings → Facebook replies & status updates**. Use **Try a local reply without sending** first, then enable replies, local-AI status questions, and owner-triggered status notifications as needed. These settings are off by default. Restart the app and refresh after installing this update.
+
+For a question such as “Luto na po yung BB-1001?”, Qwen selects a reply using only that customer's saved orders. The backend supplies the latest recorded kitchen, dispatch, or booking status. An unclear order reference asks for clarification; new requests remain subject to owner review. The model does not approve orders, confirm pending bookings, invent arrival times, or verify payments.
+
+Owner approval and workflow changes can also send notifications directly from saved records, without model inference. Staff must keep statuses current. Sending requires internet, eligible Meta access, and an incoming customer text within the app's 24-hour response window. Offline preview still works. Failed/uncertain sends are not automatically retried. See [setup, examples, and delivery behavior](docs/FACEBOOK_AUTO_REPLY.md).
 
 ## Demo and sample records
 
@@ -134,13 +143,15 @@ npm run dev
 # Actual inference against the running local model, using temporary test data:
 .venv/bin/python -B scripts/check-ai.py
 .venv/bin/python -B scripts/check-business-ai.py
+# Actual reply-selection inference with fictional orders; no Meta calls:
+.venv/bin/python -B scripts/check-customer-replies.py --cli /path/to/llama-completion
 ```
 
-As of October 10, 2026, **52 automated tests and the production build pass**. Automated model responses are mocked. Separate real local-model checks passed core order scenarios and four business-theme scenarios using CPU CLI inference and temporary databases. Those checks do not verify the running HTTP server/browser or establish general model accuracy. Owner-confirmed live demonstrations are separate evidence. See [AI validation](docs/AI_VALIDATION.md) for failures, fixes, timings, CLI options, and reproduction.
+As of October 10, 2026, **87 automated tests and the production build pass**. Automated model responses and outbound sends are mocked. Separate real local-model checks passed core order scenarios, four business-theme scenarios, and six customer reply-selection cases using CPU CLI inference and fictional data. Those checks do not verify the running HTTP server/browser, establish general model accuracy, or establish live outbound Messenger delivery. Owner-confirmed live demonstrations are separate evidence. See [AI validation](docs/AI_VALIDATION.md) for failures, fixes, timings, CLI options, and reproduction.
 
 ## Current scope and disclosures
 
-No sign-in or multi-shop isolation, automatic replies, social publishing, comment moderation, historical inbox sync, message image/audio processing, payment verification/collection, courier integration, inventory/ingredient forecasting, or AI sales predictions. AI outputs require owner review.
+No sign-in or multi-shop isolation, unrestricted AI chat, social publishing, comment moderation, historical inbox sync, message image/audio processing, payment verification/collection, courier integration, inventory/ingredient forecasting, or AI sales predictions. AI order/booking proposals require owner review. Optional status replies select bounded answers from saved records; sending can be enabled separately.
 
 Codex assisted development; it is not the product's inference provider. See [model/tool/asset disclosures](docs/DISCLOSURES.md). [BUILD_PLAN.md](BUILD_PLAN.md) records planning/event notes; this README describes the current implementation.
 

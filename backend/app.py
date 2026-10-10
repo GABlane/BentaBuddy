@@ -20,7 +20,9 @@ from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from backend.workflows import stay_dates, conflicts, check_available, reservation_items
+from backend.customer_replies import reply_request, status_text, FALLBACK
 from backend.facebook_profiles import fetch_profile
+from backend.facebook_replies import ACKNOWLEDGMENT, COOLDOWN_SECONDS, WINDOW_SECONDS, send_acknowledgment
 from backend.business import business_profile, KINDS, catalog_for, ensure_catalog, UNITS, OFFERING_TYPES
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -33,6 +35,8 @@ RUNTIME = os.environ.get('BENTABUDDY_RUNTIME', 'llamacpp')
 OLLAMA = 'http://127.0.0.1:11434'
 WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix='local-ai')
 PROFILE_WORKER = ThreadPoolExecutor(max_workers=2, thread_name_prefix='facebook-profile')
+REPLY_WORKER = ThreadPoolExecutor(max_workers=1, thread_name_prefix='facebook-reply')
+MODEL_LOCK = threading.Lock()
 PROFILE_PENDING = set()
 PROFILE_LOCK = threading.Lock()
 LOG = logging.getLogger('bentabuddy')
@@ -88,11 +92,15 @@ def payloads(db, table):
 def init_db():
     with connect() as db:
         db.execute('PRAGMA journal_mode=WAL')
-        for name in ['products', 'customers', 'orders', 'conversations', 'jobs']:
+        for name in ['products', 'customers', 'orders', 'conversations', 'jobs', 'facebook_replies']:
             db.execute('CREATE TABLE IF NOT EXISTS ' + name + ' (id TEXT PRIMARY KEY,payload TEXT NOT NULL)')
         db.execute('CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY,order_id TEXT,kind TEXT,payload TEXT,created_at TEXT)')
         db.execute('CREATE TABLE IF NOT EXISTS webhook_ids (id TEXT PRIMARY KEY)')
         db.execute('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY,value TEXT)')
+        for reply in payloads(db, 'facebook_replies'):
+            if reply['status'] in ('queued', 'generating', 'sending'):
+                reply.update(status='failed', error='App restarted before delivery was confirmed. No automatic retry was made.')
+                write_payload(db, 'facebook_replies', reply)
         # Sign-in was removed. Keep an older install's business name, then drop the account tables.
         if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='auth_owner'").fetchone():
             owner = db.execute('SELECT bakery_name FROM auth_owner WHERE id=1').fetchone()
@@ -477,7 +485,8 @@ def run_job(job_id):
             job['started_at'] = now()
             write_payload(db, 'jobs', job)
         endpoint, request_body = extraction_request(scoped_conv, products, current)
-        response = httpx.post(OLLAMA + endpoint, json=request_body, timeout=240)
+        with MODEL_LOCK:
+            response = httpx.post(OLLAMA + endpoint, json=request_body, timeout=240)
         response.raise_for_status()
         try:
             data = response.json()
@@ -659,7 +668,8 @@ def save_order(body, order_id=None):
             conv['linked_order_id'] = order['id']
             conv['reviewed_message_count'] = len(conv['messages'])
             write_payload(db, 'conversations', conv)
-        return enrich(order)
+    queue_order_status(order)
+    return enrich(order)
 
 
 @app.post('/api/orders')
@@ -726,6 +736,7 @@ def transition(order_id: str, body: TransitionBody):
         order['version'] += 1
         write_payload(db, 'orders', order)
         event(db, order_id, body.action, {'version': order['version']})
+    queue_order_status(order)
     return enrich(order)
 
 
@@ -881,6 +892,208 @@ def customer_photo(key: str):
     return FileResponse(path, media_type=customer.get('profile_photo_mime', 'image/jpeg'))
 
 
+def reply_config(db):
+    row = db.execute("SELECT value FROM settings WHERE key='facebook_auto_reply'").fetchone()
+    return dict({'enabled':False,'ai_enabled':False,'status_updates':False}, **(json.loads(row['value']) if row else {}))
+
+
+def reply_enabled(db):
+    return reply_config(db)['enabled']
+
+
+@app.get('/api/facebook/auto-reply')
+def auto_reply_settings():
+    with connect() as db:
+        name = business_profile(db).get('name') or 'aming shop'
+        recent = sorted(payloads(db, 'facebook_replies'), key=lambda r:r['created_at'], reverse=True)[:10]
+        config = reply_config(db)
+        return dict(config, token_ready=bool(os.environ.get('META_PAGE_ACCESS_TOKEN') and os.environ.get('META_PAGE_ID')),
+                    message=ACKNOWLEDGMENT.replace('{business}', name), cooldown_minutes=COOLDOWN_SECONDS // 60,
+                    recent=[{k:r.get(k) for k in ('id','customer_name','kind','status','created_at','error','text','reply_source')} for r in recent])
+
+
+class AutoReplyBody(BaseModel):
+    enabled: bool
+    ai_enabled: Optional[bool] = None
+    status_updates: Optional[bool] = None
+
+
+@app.put('/api/facebook/auto-reply')
+def update_auto_reply(body: AutoReplyBody):
+    if body.enabled and not (os.environ.get('META_PAGE_ACCESS_TOKEN') and os.environ.get('META_PAGE_ID') and os.environ.get('META_APP_SECRET')):
+        raise HTTPException(400, 'Configure the Facebook webhook and Page access token, then restart before enabling auto-reply.')
+    with connect() as db:
+        config = reply_config(db)
+        config.update({k:v for k,v in body.model_dump().items() if v is not None})
+        db.execute("INSERT INTO settings(key,value) VALUES ('facebook_auto_reply',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (dump(config),))
+    return auto_reply_settings()
+
+
+def own_reply_orders(db, customer_id):
+    return sorted([o for o in payloads(db,'orders') if o['customer_id']==customer_id and not o.get('is_demo')], key=lambda o:o['created_at'], reverse=True)[:10]
+
+
+def customer_answer(message, orders):
+    endpoint, body, choices = reply_request(message, orders, RUNTIME, MODEL)
+    try:
+        with MODEL_LOCK:
+            response = httpx.post(OLLAMA + endpoint, json=body, timeout=120)
+        response.raise_for_status()
+        result = parse_model_response(response.json(), RUNTIME)
+        key = result.get('reply_id')
+        if not isinstance(key,str) or key not in choices:
+            raise ValueError('Invalid reply selection')
+        return {'text':choices[key],'reply_source':'local_ai','reply_id':key}
+    except (httpx.HTTPError, ValueError, TypeError):
+        return {'text':FALLBACK,'reply_source':'fallback','reply_id':'fallback','error':'Local AI could not select a grounded reply; a receipt fallback was used.'}
+
+
+class ReplyPreviewBody(BaseModel):
+    conversation_id: str
+    text: str = Field(min_length=1,max_length=4000)
+
+
+@app.post('/api/facebook/reply-preview')
+def preview_customer_reply(body: ReplyPreviewBody):
+    with connect() as db:
+        conv = read_payload(db,'conversations',body.conversation_id)
+        orders = own_reply_orders(db,conv['customer_id'])
+    return customer_answer(body.text,orders)
+
+
+def valid_reply_age(stamp):
+    try:
+        return -60 <= (datetime.now(TZ)-datetime.fromisoformat(stamp)).total_seconds() < WINDOW_SECONDS
+    except (ValueError,TypeError):
+        return False
+
+
+def reserve_acknowledgment(db, conv, page, sender, mid, stamp):
+    config = reply_config(db)
+    if not config['enabled'] or not os.environ.get('META_PAGE_ACCESS_TOKEN') or page != os.environ.get('META_PAGE_ID'):
+        return None
+    if not page.isdigit() or not sender.isdigit() or not valid_reply_age(stamp):
+        return None
+    kind = 'ai_reply' if config['ai_enabled'] else 'receipt'
+    recent = [r for r in payloads(db,'facebook_replies') if r['page_id']==page and r['sender_id']==sender and r.get('kind')!='status_update']
+    if kind == 'ai_reply':
+        # Coalesce follow-ups while generation is pending. In-flight sends cannot
+        # be revoked, but unfinished generations must never answer old text.
+        for r in recent:
+            if r['status'] in ('queued','generating'):
+                r.update(status='skipped',error='Replaced by a newer customer message.')
+                write_payload(db,'facebook_replies',r)
+        if any(r['status'] in ('sent','sending','failed') and (datetime.now(TZ)-datetime.fromisoformat(r['created_at'])).total_seconds()<5 for r in recent):
+            return None
+    elif any((datetime.now(TZ)-datetime.fromisoformat(r['created_at'])).total_seconds()<COOLDOWN_SECONDS for r in recent):
+        return None
+    reply = dict(id=uid('reply'),kind=kind,conversation_id=conv['id'],conversation_version=conv['version'],customer_name=conv['customer_name'],
+                 page_id=page,sender_id=sender,source_mid=mid,source_time=stamp,created_at=now(),status='queued',error=None,
+                 text=ACKNOWLEDGMENT.replace('{business}',business_profile(db).get('name') or 'aming shop'))
+    write_payload(db,'facebook_replies',reply)
+    return reply['id']
+
+
+def submit_reply(reply_id):
+    try:
+        REPLY_WORKER.submit(deliver_acknowledgment,reply_id)
+    except Exception:
+        with connect() as db:
+            reply=read_payload(db,'facebook_replies',reply_id)
+            reply.update(status='failed',error='Reply could not be queued. No automatic retry was made.')
+            write_payload(db,'facebook_replies',reply)
+
+
+def queue_order_status(order):
+    # Called only after the owner transaction commits. Notification failure must
+    # never turn a successfully saved order into an apparent failed operation.
+    try:
+        with connect() as db:
+            db.execute('BEGIN IMMEDIATE')
+            config=reply_config(db)
+            if not config['enabled'] or not config['status_updates'] or order.get('is_demo') or not os.environ.get('META_PAGE_ACCESS_TOKEN'):
+                return
+            customer=read_payload(db,'customers',order['customer_id'])
+            page=customer.get('facebook_page_id','')
+            sender=customer.get('facebook_sender_id','')
+            if customer.get('source')!='facebook' or page!=os.environ.get('META_PAGE_ID') or not page.isdigit() or not sender.isdigit():
+                return
+            conversations=[c for c in payloads(db,'conversations') if c['customer_id']==customer['id'] and c.get('source')=='facebook' and c['messages']]
+            if not conversations:
+                return
+            conv=max(conversations,key=lambda c:c['messages'][-1]['created_at'])
+            stamp=conv['messages'][-1]['created_at']
+            if not valid_reply_age(stamp):
+                return
+            key='update_'+hashlib.sha256((order['id']+':'+str(order['version'])).encode()).hexdigest()[:24]
+            if db.execute('SELECT 1 FROM facebook_replies WHERE id=?',(key,)).fetchone():
+                return
+            reply=dict(id=key,kind='status_update',order_id=order['id'],order_version=order['version'],conversation_id=conv['id'],customer_name=customer['name'],
+                       page_id=page,sender_id=sender,source_time=stamp,created_at=now(),status='queued',error=None,text=status_text(order),reply_source='saved_status')
+            write_payload(db,'facebook_replies',reply)
+        submit_reply(key)
+    except Exception:
+        LOG.error('Status notification could not be queued; order changes remain saved.')
+
+
+def reply_can_send(db,reply):
+    config=reply_config(db)
+    return config['enabled'] and reply['page_id']==os.environ.get('META_PAGE_ID') and bool(os.environ.get('META_PAGE_ACCESS_TOKEN')) and valid_reply_age(reply['source_time']) and (reply.get('kind')!='ai_reply' or config['ai_enabled']) and (reply.get('kind')!='status_update' or config['status_updates'])
+
+
+def deliver_acknowledgment(reply_id):
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        reply=read_payload(db,'facebook_replies',reply_id)
+        if reply['status']!='queued':
+            return
+        if not reply_can_send(db,reply):
+            reply.update(status='skipped',error='Auto-reply is disabled, settings changed, or the reply window expired.')
+            write_payload(db,'facebook_replies',reply)
+            return
+        reply['status']='generating' if reply.get('kind')=='ai_reply' else 'sending'
+        write_payload(db,'facebook_replies',reply)
+        if reply.get('kind')=='ai_reply':
+            conv=read_payload(db,'conversations',reply['conversation_id'])
+            orders=own_reply_orders(db,conv['customer_id'])
+    if reply.get('kind')=='ai_reply':
+        answer=customer_answer(conv['messages'][-1]['text'],orders)
+        reply.update(answer)
+    with connect() as db:
+        db.execute('BEGIN IMMEDIATE')
+        stored=read_payload(db,'facebook_replies',reply_id)
+        if stored['status'] not in ('generating','sending'):
+            return
+        reason=None
+        if not reply_can_send(db,reply):
+            reason='Auto-reply settings or reply window changed before sending.'
+        elif reply.get('kind')=='ai_reply':
+            fresh=read_payload(db,'conversations',reply['conversation_id'])
+            if fresh['version']!=reply['conversation_version']:
+                reason='New messages arrived before this reply could be sent.'
+            elif reply.get('reply_id','').startswith('status:'):
+                own={o['id']:o for o in own_reply_orders(db,fresh['customer_id'])}
+                selected=own.get(reply['reply_id'][7:])
+                if selected:
+                    reply['text']=status_text(selected)
+                else:
+                    reason='The selected order is no longer available for this customer.'
+        elif reply.get('kind')=='status_update':
+            current=read_payload(db,'orders',reply['order_id'])
+            if status_text(current)!=reply['text']:
+                reason='Replaced by a newer order status.'
+        if reason:
+            reply.update(status='skipped',error=reason)
+            write_payload(db,'facebook_replies',reply)
+            return
+        reply['status']='sending'
+        write_payload(db,'facebook_replies',reply)
+    result=send_acknowledgment(reply['page_id'],reply['sender_id'],reply['text'],os.environ.get('META_PAGE_ACCESS_TOKEN',''),os.environ.get('META_GRAPH_VERSION','v22.0'))
+    with connect() as db:
+        reply.update(result,completed_at=now())
+        write_payload(db,'facebook_replies',reply)
+
+
 @app.get('/api/facebook/webhook')
 def verify_webhook(request: Request):
     query = request.query_params
@@ -907,6 +1120,7 @@ async def webhook(request: Request):
         raise HTTPException(400, 'Invalid JSON')
     analyze_ids = set()
     profile_ids = set()
+    reply_ids = set()
     if data.get('object') == 'page':
         with connect() as db:
             db.execute('BEGIN IMMEDIATE')
@@ -947,6 +1161,11 @@ async def webhook(request: Request):
                     write_payload(db, 'conversations', conv)
                     db.execute('INSERT INTO webhook_ids VALUES (?)', (mid,))
                     analyze_ids.add(key)
+                    # Missing timestamps cannot establish Meta's response window.
+                    if item.get('timestamp'):
+                        reply_id = reserve_acknowledgment(db, conv, page_id, sender, mid, stamp)
+                        if reply_id:
+                            reply_ids.add(reply_id)
     # Store first, then queue local inference without waiting on model execution.
     # Messages are already saved; one queueing failure must not make Meta retry the batch.
     for key in analyze_ids:
@@ -955,7 +1174,12 @@ async def webhook(request: Request):
         except Exception:
             LOG.exception('Could not queue extraction for %s; the owner can extract manually.', key)
     for key in profile_ids:
-        queue_profile(key)
+        try:
+            queue_profile(key)
+        except Exception:
+            LOG.error('Could not queue profile for %s; saved messages are unaffected.', key)
+    for reply_id in reply_ids:
+        submit_reply(reply_id)
     return {'received': True}
 
 

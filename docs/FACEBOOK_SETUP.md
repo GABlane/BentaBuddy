@@ -6,7 +6,7 @@ The Page and Meta app are created. The Messenger API Settings screen has two ind
 
 ## 1. Connect the Page in Meta
 
-Scroll down under **Generate access tokens** and choose the button to connect a Facebook Page. Select your Page and complete Meta's authorization prompts using the account that manages it. Note the numeric **Page ID**. The generated Page access token is a secret; do not post it to chat or GitHub. The receiver does not send replies. Optional profile lookup uses a backend-only Page access token saved by the profile configuration helper below.
+Scroll down under **Generate access tokens** and choose the button to connect a Facebook Page. Select your Page and complete Meta's authorization prompts using the account that manages it. Note the numeric **Page ID**. The generated Page access token is a secret; do not post it to chat or GitHub. Optional replies answer status questions using local AI and saved records, or send fixed receipts and owner-triggered status notifications when enabled in Settings; see [auto-reply setup](FACEBOOK_AUTO_REPLY.md). Optional profile lookup uses a backend-only Page access token saved by the profile configuration helper below.
 
 ## 2. Save credentials locally
 
@@ -57,7 +57,7 @@ Complete the connected Page's webhook subscriptions and enable **messages**. If 
 
 In development, use a personal Facebook account with the administrator/developer/tester role on the Meta app (the Messenger setup screen explains this restriction). Send the Page a synthetic order as that personal profile. Messages sent as the Page are echoes and are ignored.
 
-Open BentaBuddy → **Inbox**. The app opens directly in the live workspace. A received text message should appear and queue local inference. Review and approve the proposal, then open its scheduled work date. No automatic customer reply is sent.
+Open BentaBuddy → **Inbox**. The app opens directly in the live workspace. A received text message should appear and queue local inference. Review and approve the proposal, then open its scheduled work date. Auto-reply is off by default; optionally enable local-AI status replies and workflow notifications in Settings. Use the local preview first.
 
 Keep both Terminals open. The Quick Tunnel address is temporary and changes when restarted; update the Meta callback URL and verify again if it changes. Internet is required for new Facebook events; previously received text and the local bakery workflow continue without it.
 
@@ -69,7 +69,7 @@ Keep both Terminals open. The Quick Tunnel address is temporary and changes when
 - Use the generated Verify token, not the App Secret or Page access token.
 - See `data/facebook-relay.log` for relay startup errors. Files under `data/` remain ignored.
 
-Implementation checks include signed-byte preservation, challenge forwarding, relay route restrictions, deduplication, and failure handling. The full project suite has 52 passing tests; model responses in automated tests are mocked. The owner confirmed live verification, tunnel operation, and receipt during development. Validate access with the actual accounts used in your demo; public access is not implied.
+Implementation checks include signed-byte preservation, challenge forwarding, relay route restrictions, deduplication, and failure handling. The full project suite has 87 passing tests; model responses and outbound sends in automated tests are mocked. Six separate real local-model checks cover customer status-reply selection. The owner confirmed live verification, tunnel operation, and receipt during development; live outbound replies remain to be verified after restart. Validate access with the actual accounts used in your demo; public access is not implied. See [reply setup](FACEBOOK_AUTO_REPLY.md).
 
 Sources: [Meta Messenger API documentation](https://www.postman.com/meta/messenger-platform-api/documentation/iyp204x/messenger-platform-api), [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/).
 

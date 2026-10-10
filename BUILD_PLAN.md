@@ -8,7 +8,9 @@ Replace the earlier offline study concept with a responsive order-management web
 
 Product promise: turn messy customer conversations into reviewed orders, then help the owner know what to prepare, what to fulfill, and what customers buy most often.
 
-Status on October 10: eight modules and four business themes implemented; sign-in was removed for the single-owner prototype. Production build and 52 automated tests pass. Separate real local CPU model checks cover core order scenarios and all four themes. The owner confirmed real Facebook delivery, customer names/photos, corrections, and offline operation. The repository is published; final video, social post, and submission are handled by the team. See [docs/AI_VALIDATION.md](docs/AI_VALIDATION.md) for test scope and the distinction between CLI inference checks and live browser evidence.
+Status on October 10: eight modules and four business themes implemented; sign-in was removed for the single-owner prototype. Production build and 87 automated tests pass. Separate real local CPU model checks cover core order scenarios and all four themes. The owner confirmed real Facebook delivery, customer names/photos, corrections, and offline operation. The repository is published; final video, social post, and submission are handled by the team. See [docs/AI_VALIDATION.md](docs/AI_VALIDATION.md) for test scope and the distinction between CLI inference checks and live browser evidence.
+
+Optional replies now include local-AI selection of saved-record status answers and owner-triggered kitchen/dispatch/booking notifications. Six real local-model reply checks pass. These modes are off by default; live outbound Messenger delivery still requires verification after restart. Use [docs/FACEBOOK_AUTO_REPLY.md](docs/FACEBOOK_AUTO_REPLY.md) for setup and [SUBMISSION.md](SUBMISSION.md) for the current technical disclosure and demo outline.
 
 ## Event constraints
 
@@ -41,7 +43,7 @@ Source: AppBuildersPH-Hackathon-2026-Participant-Briefing.pdf, read in full (29 
 - Catalog matching uses known products/aliases. Unknown product, relative date ambiguity, unsupported modification, or missing quantity/time stays flagged.
 - Highlight source message IDs/excerpts and changes. Never invent missing details.
 - Owner can correct, approve, or dismiss. New messages cannot silently overwrite an approved order or change the production queue; revisions need review.
-- Draft customer clarification text may be copied manually. Automatic customer replies are outside MVP.
+- Optional Messenger replies now include fixed receipts, local-AI selection of grounded customer status answers, and owner-triggered workflow notifications. They are off by default, use persisted send records, and never automatically retry uncertain sends. Customer questions only receive their own saved order facts; approval remains an owner action.
 
 ### 3. Orders — required
 
