@@ -89,6 +89,7 @@ Public-customer Facebook access remains dependent on Meta permissions and approv
 
 - Repository: [GABlane/BentaBuddy](https://github.com/GABlane/BentaBuddy)
 - Setup and implementation: [README.md](README.md)
+- Step-by-step reproduction: [docs/SETUP.md](docs/SETUP.md)
 - Model, tools, assets, and sample-data disclosures: [docs/DISCLOSURES.md](docs/DISCLOSURES.md)
 - Logo/video creative direction: [BENTABUDDY_CREATIVE_BRIEF.md](BENTABUDDY_CREATIVE_BRIEF.md)
 

@@ -78,6 +78,8 @@ Meta already processes Messenger conversations, and Cloudflare transports webhoo
 
 ## Run locally
 
+**First time? Follow [the step-by-step setup guide](docs/SETUP.md)** for prerequisites, cloning, installation, your first AI extraction, phone access, Facebook, offline demonstration, and troubleshooting. The commands below are the quick start.
+
 For a fresh Apple silicon checkout, install Node.js 22+ and Python 3.9+, then run from the repository root:
 
 ```bash
